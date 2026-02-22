@@ -620,6 +620,19 @@ input[type="range"]::-moz-range-thumb {
   color: var(--accent);
 }
 
+/* ── Preset Button Group ── */
+
+.preset-group {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.preset-group .btn {
+  flex: 1;
+  justify-content: center;
+}
+
 /* ── Capture Dialog ── */
 
 .capture-dialog {

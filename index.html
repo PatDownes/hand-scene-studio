@@ -315,6 +315,54 @@
         </div>
       </div>
 
+      <!-- Camera Properties -->
+      <div id="props-camera" class="props-panel">
+        <div class="panel-section">
+          <h3>Camera</h3>
+
+          <div class="preset-group">
+            <button class="btn btn-sm" data-cam-preset="home">Home</button>
+            <button class="btn btn-sm" data-cam-preset="front">Front</button>
+            <button class="btn btn-sm" data-cam-preset="top">Top</button>
+            <button class="btn btn-sm" data-cam-preset="right">Right</button>
+          </div>
+
+          <div class="subsection">Position</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="cam-pos-x" min="-5" max="5" step="0.01" value="0">
+            <span class="value" data-for="cam-pos-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="cam-pos-y" min="-2" max="5" step="0.01" value="0.5">
+            <span class="value" data-for="cam-pos-y">0.50</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="cam-pos-z" min="-5" max="5" step="0.01" value="1.5">
+            <span class="value" data-for="cam-pos-z">1.50</span>
+          </div>
+
+          <div class="subsection">Target</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="cam-target-x" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="cam-target-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="cam-target-y" min="-2" max="3" step="0.01" value="0.15">
+            <span class="value" data-for="cam-target-y">0.15</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="cam-target-z" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="cam-target-z">0.00</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Scene Properties (always visible) -->
       <div class="panel-section">
         <h3>Scene</h3>

@@ -529,6 +529,15 @@ function syncScreenSliders() {
   $('#screen-color').value = screenState.color;
 }
 
+function syncCameraSliders() {
+  syncSlider('cam-pos-x', camera.position.x);
+  syncSlider('cam-pos-y', camera.position.y);
+  syncSlider('cam-pos-z', camera.position.z);
+  syncSlider('cam-target-x', controls.target.x);
+  syncSlider('cam-target-y', controls.target.y);
+  syncSlider('cam-target-z', controls.target.z);
+}
+
 function syncSceneSliders() {
   syncSlider('ambient-intensity', sceneState.ambientIntensity);
   $('#scene-bg').value = sceneState.background;
@@ -622,6 +631,32 @@ function wireControls() {
     screenState.color = e.target.value;
     updateScreen();
   });
+
+  // ── Camera ──
+  bindRange('cam-pos-x', () => camera.position.x, (v) => { camera.position.x = v; controls.update(); });
+  bindRange('cam-pos-y', () => camera.position.y, (v) => { camera.position.y = v; controls.update(); });
+  bindRange('cam-pos-z', () => camera.position.z, (v) => { camera.position.z = v; controls.update(); });
+  bindRange('cam-target-x', () => controls.target.x, (v) => { controls.target.x = v; controls.update(); });
+  bindRange('cam-target-y', () => controls.target.y, (v) => { controls.target.y = v; controls.update(); });
+  bindRange('cam-target-z', () => controls.target.z, (v) => { controls.target.z = v; controls.update(); });
+
+  // Camera presets
+  const camPresets = {
+    home:  { pos: [0, 0.5, 1.5],   target: [0, 0.15, 0] },
+    front: { pos: [0, 0.5, 2.5],   target: [0, 0.25, 0] },
+    top:   { pos: [0, 3, 0.01],    target: [0, 0, 0] },
+    right: { pos: [2.5, 0.5, 0],   target: [0, 0.25, 0] },
+  };
+  for (const btn of $$('[data-cam-preset]')) {
+    btn.addEventListener('click', () => {
+      const preset = camPresets[btn.dataset.camPreset];
+      if (!preset) return;
+      camera.position.set(...preset.pos);
+      controls.target.set(...preset.target);
+      controls.update();
+      syncCameraSliders();
+    });
+  }
 
   // ── Scene ──
   bindRange('ambient-intensity', () => sceneState.ambientIntensity, (v) => { sceneState.ambientIntensity = v; updateAmbient(); });
@@ -852,7 +887,7 @@ function buildPropRegistry() {
   // Camera
   for (const axis of ['x', 'y', 'z']) {
     PROP_REGISTRY[`camera.position.${axis}`] = {
-      state: () => camera.position, keys: [axis], apply: () => {},
+      state: () => camera.position, keys: [axis], apply: () => controls.update(),
     };
     PROP_REGISTRY[`camera.target.${axis}`] = {
       state: () => controls.target, keys: [axis], apply: () => controls.update(),
@@ -913,6 +948,7 @@ function applyAnimationFrame(time) {
   else if (selectedObject === 'light') syncLightSliders();
   else if (selectedObject === 'screen') syncScreenSliders();
   else if (selectedObject === 'scene') syncSceneSliders();
+  else if (selectedObject === 'camera') syncCameraSliders();
 
   updatePlayhead(time);
 
@@ -1108,9 +1144,20 @@ function renderTimeline() {
 
     const label = document.createElement('span');
     label.className = 'lane-label';
-    label.contentEditable = true;
     label.textContent = lane.label;
+    label.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      label.contentEditable = true;
+      label.focus();
+      // Select all text
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
     label.addEventListener('blur', () => {
+      label.contentEditable = false;
       timeline.setLaneLabel(lane.id, label.textContent.trim() || lane.label);
     });
     label.addEventListener('keydown', (e) => {
@@ -1151,7 +1198,7 @@ function renderTimeline() {
 
     // Click header to select lane
     header.addEventListener('click', (e) => {
-      if (e.target.closest('.lane-arrows') || e.target === enableCb || e.target === del || e.target === label) return;
+      if (e.target.closest('.lane-arrows') || e.target === enableCb || e.target === del || label.contentEditable === 'true') return;
       selectedLaneId = lane.id;
       selectedKeyframeIdx = -1;
       renderTimeline();
@@ -1410,6 +1457,7 @@ function loadScene(jsonText) {
     syncLightSliders();
     syncScreenSliders();
     syncSceneSliders();
+    syncCameraSliders();
     buildObjectList();
     renderTimeline();
 
