@@ -925,6 +925,60 @@ function applyAnimationFrame(time) {
   if (controls) controls.enabled = !cameraAnimated;
 }
 
+// ── Property Capture Groups ──
+
+function getCaptureGroups(objectId) {
+  if (objectId.startsWith('hand-')) {
+    const slotKey = objectId === 'hand-Right' ? 'Right' : 'Left';
+    const p = `hand.${slotKey}`;
+    return [
+      { id: 'curls', label: 'Curls', paths: ['thumb','index','middle','ring','pinky'].map(f => `${p}.curls.${f}`) },
+      { id: 'spread', label: 'Spread', paths: ['thumb','index','middle','ring','pinky'].map(f => `${p}.spread.${f}`) },
+      { id: 'wrist', label: 'Wrist', paths: [`${p}.wrist.flex`, `${p}.wrist.deviation`, `${p}.wrist.pronation`] },
+      { id: 'cmc', label: 'CMC', paths: [`${p}.cmc.flex`, `${p}.cmc.sweep`, `${p}.cmc.rotation`] },
+      { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `${p}.position.${a}`) },
+      { id: 'rotation', label: 'Rotation', paths: ['x','y','z'].map(a => `${p}.rotation.${a}`) },
+      { id: 'scale', label: 'Scale', paths: [`${p}.scale`] },
+      { id: 'color', label: 'Color', paths: [`${p}.color`] },
+    ];
+  }
+  if (objectId === 'light') {
+    return [
+      { id: 'settings', label: 'Settings', paths: ['light.intensity', 'light.angle', 'light.penumbra'] },
+      { id: 'color', label: 'Color', paths: ['light.color'] },
+      { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `light.position.${a}`) },
+      { id: 'target', label: 'Target', paths: ['x','y','z'].map(a => `light.target.${a}`) },
+    ];
+  }
+  if (objectId === 'screen') {
+    return [
+      { id: 'size', label: 'Size', paths: ['screen.width', 'screen.height'] },
+      { id: 'color', label: 'Color', paths: ['screen.color'] },
+      { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `screen.position.${a}`) },
+    ];
+  }
+  if (objectId === 'scene') {
+    return [
+      { id: 'ambient', label: 'Ambient', paths: ['scene.ambientIntensity'] },
+      { id: 'background', label: 'Background', paths: ['scene.background'] },
+    ];
+  }
+  if (objectId === 'camera') {
+    return [
+      { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `camera.position.${a}`) },
+      { id: 'target', label: 'Target', paths: ['x','y','z'].map(a => `camera.target.${a}`) },
+    ];
+  }
+  return [];
+}
+
+function objectDisplayName(objectId) {
+  if (objectId === 'hand-Right') return 'Right Hand';
+  if (objectId === 'hand-Left') return 'Left Hand';
+  const obj = sceneObjects.find(o => o.id === objectId);
+  return obj?.label || objectId;
+}
+
 // ── Keyframe Capture ──
 
 function captureKeyframe() {
@@ -941,18 +995,92 @@ function captureKeyframe() {
     selectedLaneId = timeline.lanes[0].id;
   }
 
-  const paths = OBJECT_PATHS[selectedObject];
-  if (!paths || paths.length === 0) return;
+  const lane = timeline.getLane(selectedLaneId);
 
-  const properties = {};
-  for (const path of paths) {
-    properties[path] = readProp(path);
+  // If lane has no capture filter, show dialog to configure it
+  if (!lane.captureFilter) {
+    showCaptureDialog(lane);
+    return;
   }
 
-  timeline.addKeyframe(selectedLaneId, timeline.currentTime, properties);
-  renderTimeline();
+  doCaptureKeyframe(lane);
+}
 
+function doCaptureKeyframe(lane) {
+  const filter = lane.captureFilter;
+  const groups = getCaptureGroups(filter.objectId);
+  const activeGroups = groups.filter(g => filter.groupIds.includes(g.id));
+
+  const properties = {};
+  for (const group of activeGroups) {
+    for (const path of group.paths) {
+      properties[path] = readProp(path);
+    }
+  }
+
+  timeline.addKeyframe(lane.id, timeline.currentTime, properties);
+  renderTimeline();
   $('#footer-status').textContent = `Keyframe added at ${timeline.currentTime.toFixed(2)}s`;
+}
+
+// ── Capture Dialog ──
+
+function showCaptureDialog(lane) {
+  const groups = getCaptureGroups(selectedObject);
+  if (groups.length === 0) return;
+
+  const dialog = $('#capture-dialog');
+  const container = $('#capture-groups');
+  container.innerHTML = '';
+
+  // Pre-check from existing filter, or all checked for new
+  const existingIds = lane.captureFilter?.groupIds || [];
+
+  for (const group of groups) {
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = group.id;
+    cb.checked = existingIds.length > 0 ? existingIds.includes(group.id) : true;
+    lbl.append(cb, ` ${group.label}`);
+    container.appendChild(lbl);
+  }
+
+  dialog.classList.add('open');
+
+  $('#capture-confirm').onclick = () => {
+    const checked = [...container.querySelectorAll('input:checked')].map(el => el.value);
+    if (checked.length === 0) {
+      hideCaptureDialog();
+      return;
+    }
+
+    lane.captureFilter = { objectId: selectedObject, groupIds: checked };
+
+    // Auto-name lane if still using default label
+    if (lane.label.match(/^Lane \d+$/)) {
+      const objName = objectDisplayName(selectedObject);
+      const groupLabels = groups.filter(g => checked.includes(g.id)).map(g => g.label);
+      if (groupLabels.length === groups.length) {
+        lane.label = objName;
+      } else {
+        const joined = groupLabels.join(', ');
+        lane.label = joined.length > 22 ? `${objName}: ${groupLabels.length} groups` : `${objName}: ${joined}`;
+      }
+      timeline.setLaneLabel(lane.id, lane.label);
+    }
+
+    hideCaptureDialog();
+    doCaptureKeyframe(lane);
+  };
+
+  $('#capture-cancel').onclick = () => {
+    hideCaptureDialog();
+  };
+}
+
+function hideCaptureDialog() {
+  $('#capture-dialog').classList.remove('open');
 }
 
 // ── Timeline UI ──
@@ -989,6 +1117,25 @@ function renderTimeline() {
       if (e.key === 'Enter') { e.preventDefault(); label.blur(); }
     });
 
+    // Reorder arrows
+    const arrows = document.createElement('span');
+    arrows.className = 'lane-arrows';
+    const upArr = document.createElement('span');
+    upArr.textContent = '\u25B2';
+    upArr.addEventListener('click', (e) => {
+      e.stopPropagation();
+      timeline.moveLaneUp(lane.id);
+      renderTimeline();
+    });
+    const downArr = document.createElement('span');
+    downArr.textContent = '\u25BC';
+    downArr.addEventListener('click', (e) => {
+      e.stopPropagation();
+      timeline.moveLaneDown(lane.id);
+      renderTimeline();
+    });
+    arrows.append(upArr, downArr);
+
     const del = document.createElement('span');
     del.className = 'lane-delete';
     del.textContent = '\u2715';
@@ -998,18 +1145,19 @@ function renderTimeline() {
       if (selectedLaneId === lane.id) {
         selectedLaneId = timeline.lanes.length > 0 ? timeline.lanes[0].id : null;
       }
+      selectedKeyframeIdx = -1;
       renderTimeline();
     });
 
     // Click header to select lane
     header.addEventListener('click', (e) => {
-      if (e.target === enableCb || e.target === del || e.target === label) return;
+      if (e.target.closest('.lane-arrows') || e.target === enableCb || e.target === del || e.target === label) return;
       selectedLaneId = lane.id;
       selectedKeyframeIdx = -1;
       renderTimeline();
     });
 
-    header.append(enableCb, label, del);
+    header.append(enableCb, label, arrows, del);
 
     // Track bar
     const track = document.createElement('div');
@@ -1061,6 +1209,8 @@ function renderTimeline() {
     row.append(header, track);
     container.appendChild(row);
   }
+
+  updateKeyframeInfo();
 }
 
 function updatePlayhead(time) {
@@ -1070,6 +1220,25 @@ function updatePlayhead(time) {
   }
   const timeEl = $('#timeline-time');
   if (timeEl) timeEl.textContent = time.toFixed(2) + 's';
+}
+
+function updateKeyframeInfo() {
+  const infoEl = $('#keyframe-info');
+  const delBtn = $('#btn-del-keyframe');
+
+  if (selectedLaneId && selectedKeyframeIdx >= 0) {
+    const lane = timeline.getLane(selectedLaneId);
+    const kf = lane?.keyframes[selectedKeyframeIdx];
+    if (kf) {
+      const propCount = Object.keys(kf.properties).length;
+      infoEl.textContent = `${kf.time.toFixed(2)}s \u00B7 ${propCount} props`;
+      delBtn.style.display = '';
+      return;
+    }
+  }
+
+  infoEl.textContent = '';
+  delBtn.style.display = 'none';
 }
 
 // ── Timeline Controls ──
@@ -1099,6 +1268,22 @@ function wireTimeline() {
     captureKeyframe();
   });
 
+  $('#btn-del-keyframe').addEventListener('click', () => {
+    if (selectedLaneId && selectedKeyframeIdx >= 0) {
+      timeline.removeKeyframe(selectedLaneId, selectedKeyframeIdx);
+      selectedKeyframeIdx = -1;
+      renderTimeline();
+    }
+  });
+
+  // Close capture dialog on outside click
+  document.addEventListener('mousedown', (e) => {
+    const dialog = $('#capture-dialog');
+    if (dialog.classList.contains('open') && !dialog.contains(e.target) && e.target.id !== 'btn-add-keyframe') {
+      hideCaptureDialog();
+    }
+  });
+
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     // Skip if typing in an input
@@ -1110,7 +1295,7 @@ function wireTimeline() {
       $('#btn-play').textContent = timeline.playing ? '\u23F8' : '\u25B6';
     }
 
-    if (e.key === 'Delete' && selectedLaneId && selectedKeyframeIdx >= 0) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLaneId && selectedKeyframeIdx >= 0) {
       timeline.removeKeyframe(selectedLaneId, selectedKeyframeIdx);
       selectedKeyframeIdx = -1;
       renderTimeline();

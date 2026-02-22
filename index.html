@@ -342,10 +342,20 @@
           <input type="checkbox" id="timeline-loop" checked> Loop
         </label>
         <div style="flex:1"></div>
+        <span id="keyframe-info" class="keyframe-info"></span>
         <button id="btn-add-lane" class="btn btn-sm">+ Lane</button>
         <button id="btn-add-keyframe" class="btn btn-sm btn-primary">+ Key</button>
+        <button id="btn-del-keyframe" class="btn btn-sm btn-danger" style="display:none">- Key</button>
       </div>
       <div class="timeline-lanes" id="timeline-lanes"></div>
+      <div id="capture-dialog" class="capture-dialog">
+        <div class="capture-header">Capture Properties</div>
+        <div id="capture-groups" class="capture-groups"></div>
+        <div class="capture-actions">
+          <button id="capture-cancel" class="btn btn-sm">Cancel</button>
+          <button id="capture-confirm" class="btn btn-sm btn-primary">Add</button>
+        </div>
+      </div>
     </div>
 
     <!-- Footer -->

@@ -23,6 +23,7 @@ class TimelineEngine {
       label: label || `Lane ${this.lanes.length + 1}`,
       enabled: true,
       keyframes: [],
+      captureFilter: null, // { objectId, groupIds[] }
     };
     this.lanes.push(lane);
     return lane;
@@ -224,6 +225,22 @@ class TimelineEngine {
     this._rafId = requestAnimationFrame(ts => this._tick(ts));
   }
 
+  // ── Lane reorder ──
+
+  moveLaneUp(id) {
+    const idx = this.lanes.findIndex(l => l.id === id);
+    if (idx > 0) {
+      [this.lanes[idx - 1], this.lanes[idx]] = [this.lanes[idx], this.lanes[idx - 1]];
+    }
+  }
+
+  moveLaneDown(id) {
+    const idx = this.lanes.findIndex(l => l.id === id);
+    if (idx >= 0 && idx < this.lanes.length - 1) {
+      [this.lanes[idx], this.lanes[idx + 1]] = [this.lanes[idx + 1], this.lanes[idx]];
+    }
+  }
+
   // ── Serialization ──
 
   toJSON() {
@@ -235,6 +252,7 @@ class TimelineEngine {
         id: lane.id,
         label: lane.label,
         enabled: lane.enabled,
+        captureFilter: lane.captureFilter || null,
         keyframes: lane.keyframes.map(kf => ({
           time: kf.time,
           properties: { ...kf.properties },
@@ -252,6 +270,7 @@ class TimelineEngine {
       id: l.id,
       label: l.label,
       enabled: l.enabled ?? true,
+      captureFilter: l.captureFilter || null,
       keyframes: (l.keyframes || []).map(kf => ({
         time: kf.time,
         properties: { ...kf.properties },
