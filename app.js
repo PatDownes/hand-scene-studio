@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { HandViewer3D } from '../hand-pose-studio/hand-viewer-3d.js';
 import { SkeletonStore } from '../hand-pose-studio/skeleton-store.js';
+import { TimelineEngine } from './timeline.js';
 
 // ── State ──
 
@@ -71,6 +72,14 @@ function createSlotHand(handedness) {
 
   return { group, mesh, forearmMesh };
 }
+
+// ── Timeline State ──
+
+let timeline = null;
+let selectedLaneId = null;
+let selectedKeyframeIdx = -1;
+const PROP_REGISTRY = {};
+const OBJECT_PATHS = {};
 
 // ── Three.js refs ──
 
@@ -292,8 +301,12 @@ function updateLight() {
 // ── Screen ──
 
 function updateScreen() {
-  screenMesh.geometry.dispose();
-  screenMesh.geometry = new THREE.PlaneGeometry(screenState.width, screenState.height);
+  // Only recreate geometry if dimensions changed
+  const params = screenMesh.geometry.parameters;
+  if (params.width !== screenState.width || params.height !== screenState.height) {
+    screenMesh.geometry.dispose();
+    screenMesh.geometry = new THREE.PlaneGeometry(screenState.width, screenState.height);
+  }
   screenMesh.position.set(screenState.position.x, screenState.position.y, screenState.position.z);
   screenMesh.material.color.set(screenState.color);
 }
@@ -308,10 +321,12 @@ function updateAmbient() {
 // ── Object List ──
 
 const sceneObjects = [
-  { id: 'hand-Right', slotKey: 'Right', icon: '🤚' },
-  { id: 'hand-Left',  slotKey: 'Left',  icon: '🤚' },
-  { id: 'light', label: 'Spot Light', icon: '💡' },
-  { id: 'screen', label: 'Screen', icon: '🖥' },
+  { id: 'hand-Right', slotKey: 'Right', icon: '\u{1F91A}' },
+  { id: 'hand-Left',  slotKey: 'Left',  icon: '\u{1F91A}' },
+  { id: 'light', label: 'Spot Light', icon: '\u{1F4A1}' },
+  { id: 'screen', label: 'Screen', icon: '\u{1F5A5}' },
+  { id: 'scene', label: 'Scene', icon: '\u{1F3AC}' },
+  { id: 'camera', label: 'Camera', icon: '\u{1F4F7}' },
 ];
 
 function buildObjectList() {
@@ -323,7 +338,7 @@ function buildObjectList() {
 
     if (obj.slotKey) {
       const st = handStates[obj.slotKey];
-      const eyeIcon = st.enabled ? '👁' : '👁‍🗨';
+      const eyeIcon = st.enabled ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
       const label = `Hand (${st.handedness})`;
 
       item.innerHTML = `<span class="icon">${obj.icon}</span><span class="label">${label}</span><span class="visibility-toggle">${eyeIcon}</span>`;
@@ -397,8 +412,7 @@ function landmarksToMIDI(landmarks) {
     curls[name] = Math.max(0, Math.min(1, 1 - ratio));
   }
 
-  // Finger spread: angle of each finger's MCP→TIP relative to middle MCP→TIP,
-  // projected onto the palm plane
+  // Finger spread
   const wrist = v3(0);
   const idxMcp = v3(5), midMcp = v3(9), ringMcp = v3(13), pnkMcp = v3(17);
   const palmNorm = norm(cross(sub(pnkMcp, wrist), sub(idxMcp, wrist)));
@@ -407,7 +421,6 @@ function landmarksToMIDI(landmarks) {
   const spread = {};
   for (const [name, idx] of Object.entries(fingerDef)) {
     const dir = norm(sub(v3(idx[3]), v3(idx[0])));
-    // Project onto palm plane
     const projDir = norm(sub(dir, { x: palmNorm.x * dot(dir, palmNorm), y: palmNorm.y * dot(dir, palmNorm), z: palmNorm.z * dot(dir, palmNorm) }));
     const projMid = norm(sub(midDir, { x: palmNorm.x * dot(midDir, palmNorm), y: palmNorm.y * dot(midDir, palmNorm), z: palmNorm.z * dot(midDir, palmNorm) }));
 
@@ -415,19 +428,10 @@ function landmarksToMIDI(landmarks) {
     const c = cross(projMid, projDir);
     if (dot(c, palmNorm) < 0) angle = -angle;
 
-    // Map ±30° → 0..1 (0.5 = neutral)
     spread[name] = Math.max(0, Math.min(1, 0.5 + angle / (Math.PI / 6)));
   }
 
-  // Wrist: approximate flex from angle between forearm direction and hand plane
-  // Using wrist→middle-MCP as hand direction, keep deviation/pronation at 0
-  const handDir = norm(sub(midMcp, wrist));
-  const fingerPlaneNorm = norm(cross(sub(idxMcp, wrist), sub(pnkMcp, wrist)));
-
-  // Flex: how much the hand bends forward (negative dot with palm normal)
-  // Hard to extract without forearm reference, leave at 0
   const wristParams = { flex: 0, deviation: 0, pronation: 0 };
-
   return { curls, spread, wrist: wristParams };
 }
 
@@ -442,7 +446,7 @@ function bindRange(id, getter, setter) {
     if (!display) return;
     const v = getter();
     if (id.startsWith('light-angle')) {
-      display.textContent = `${Math.round(v)}°`;
+      display.textContent = `${Math.round(v)}\u00B0`;
     } else if (Number.isInteger(v)) {
       display.textContent = String(v);
     } else {
@@ -467,7 +471,7 @@ function syncSlider(id, value) {
   const display = $(`.value[data-for="${id}"]`);
   if (!display) return;
   if (id.startsWith('light-angle')) {
-    display.textContent = `${Math.round(value)}°`;
+    display.textContent = `${Math.round(value)}\u00B0`;
   } else if (Number.isInteger(value)) {
     display.textContent = String(value);
   } else {
@@ -501,6 +505,33 @@ function syncAllHandSliders() {
   }
   const title = $('#hand-panel-title');
   if (title) title.textContent = `Hand (${s.handedness})`;
+}
+
+function syncLightSliders() {
+  syncSlider('light-intensity', lightState.intensity);
+  syncSlider('light-angle', lightState.angle);
+  syncSlider('light-penumbra', lightState.penumbra);
+  syncSlider('light-pos-x', lightState.position.x);
+  syncSlider('light-pos-y', lightState.position.y);
+  syncSlider('light-pos-z', lightState.position.z);
+  syncSlider('light-target-x', lightState.target.x);
+  syncSlider('light-target-y', lightState.target.y);
+  syncSlider('light-target-z', lightState.target.z);
+  $('#light-color').value = lightState.color;
+}
+
+function syncScreenSliders() {
+  syncSlider('screen-width', screenState.width);
+  syncSlider('screen-height', screenState.height);
+  syncSlider('screen-pos-x', screenState.position.x);
+  syncSlider('screen-pos-y', screenState.position.y);
+  syncSlider('screen-pos-z', screenState.position.z);
+  $('#screen-color').value = screenState.color;
+}
+
+function syncSceneSliders() {
+  syncSlider('ambient-intensity', sceneState.ambientIntensity);
+  $('#scene-bg').value = sceneState.background;
 }
 
 function wireControls() {
@@ -602,6 +633,21 @@ function wireControls() {
 
   // ── PNG Export ──
   $('#btn-export-png').addEventListener('click', exportPNG);
+
+  // ── Save / Load Scene ──
+  $('#btn-save-scene').addEventListener('click', saveScene);
+  $('#btn-load-scene').addEventListener('click', () => $('#file-scene').click());
+  $('#file-scene').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    file.text().then(text => {
+      loadScene(text);
+    }).catch(err => {
+      console.error('Failed to load scene:', err);
+      $('#footer-status').textContent = 'Failed to load scene file';
+    });
+    e.target.value = '';
+  });
 }
 
 // ── Pose Library ──
@@ -715,6 +761,445 @@ function renderSkeletonList() {
   }
 }
 
+// ── Property Registry ──
+
+function buildPropRegistry() {
+  // Hand properties (Right + Left)
+  for (const slotKey of ['Right', 'Left']) {
+    const prefix = `hand.${slotKey}`;
+    const apply = () => poseOneHand(slotKey);
+
+    for (const axis of ['x', 'y', 'z']) {
+      PROP_REGISTRY[`${prefix}.position.${axis}`] = {
+        state: () => handStates[slotKey], keys: ['position', axis], apply,
+      };
+    }
+
+    PROP_REGISTRY[`${prefix}.scale`] = {
+      state: () => handStates[slotKey], keys: ['scale'], apply,
+    };
+
+    PROP_REGISTRY[`${prefix}.color`] = {
+      state: () => handStates[slotKey], keys: ['color'], apply,
+    };
+
+    for (const finger of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
+      PROP_REGISTRY[`${prefix}.curls.${finger}`] = {
+        state: () => handStates[slotKey], keys: ['curls', finger], apply,
+      };
+      PROP_REGISTRY[`${prefix}.spread.${finger}`] = {
+        state: () => handStates[slotKey], keys: ['spread', finger], apply,
+      };
+    }
+
+    for (const param of ['flex', 'deviation', 'pronation']) {
+      PROP_REGISTRY[`${prefix}.wrist.${param}`] = {
+        state: () => handStates[slotKey], keys: ['wrist', param], apply,
+      };
+    }
+
+    for (const param of ['flex', 'sweep', 'rotation']) {
+      PROP_REGISTRY[`${prefix}.cmc.${param}`] = {
+        state: () => handStates[slotKey], keys: ['cmc', param], apply,
+      };
+    }
+
+    for (const axis of ['x', 'y', 'z']) {
+      PROP_REGISTRY[`${prefix}.rotation.${axis}`] = {
+        state: () => handStates[slotKey], keys: ['rotation', axis], apply,
+      };
+    }
+  }
+
+  // Light
+  PROP_REGISTRY['light.intensity'] = { state: () => lightState, keys: ['intensity'], apply: updateLight };
+  PROP_REGISTRY['light.angle'] = { state: () => lightState, keys: ['angle'], apply: updateLight };
+  PROP_REGISTRY['light.penumbra'] = { state: () => lightState, keys: ['penumbra'], apply: updateLight };
+  PROP_REGISTRY['light.color'] = { state: () => lightState, keys: ['color'], apply: updateLight };
+  for (const axis of ['x', 'y', 'z']) {
+    PROP_REGISTRY[`light.position.${axis}`] = { state: () => lightState, keys: ['position', axis], apply: updateLight };
+    PROP_REGISTRY[`light.target.${axis}`] = { state: () => lightState, keys: ['target', axis], apply: updateLight };
+  }
+
+  // Screen
+  PROP_REGISTRY['screen.width'] = { state: () => screenState, keys: ['width'], apply: updateScreen };
+  PROP_REGISTRY['screen.height'] = { state: () => screenState, keys: ['height'], apply: updateScreen };
+  PROP_REGISTRY['screen.color'] = { state: () => screenState, keys: ['color'], apply: updateScreen };
+  for (const axis of ['x', 'y', 'z']) {
+    PROP_REGISTRY[`screen.position.${axis}`] = { state: () => screenState, keys: ['position', axis], apply: updateScreen };
+  }
+
+  // Scene
+  PROP_REGISTRY['scene.ambientIntensity'] = { state: () => sceneState, keys: ['ambientIntensity'], apply: updateAmbient };
+  PROP_REGISTRY['scene.background'] = { state: () => sceneState, keys: ['background'], apply: updateAmbient };
+
+  // Camera
+  for (const axis of ['x', 'y', 'z']) {
+    PROP_REGISTRY[`camera.position.${axis}`] = {
+      state: () => camera.position, keys: [axis], apply: () => {},
+    };
+    PROP_REGISTRY[`camera.target.${axis}`] = {
+      state: () => controls.target, keys: [axis], apply: () => controls.update(),
+    };
+  }
+
+  // Build OBJECT_PATHS (keyed by selectedObject IDs)
+  OBJECT_PATHS['hand-Right'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('hand.Right.'));
+  OBJECT_PATHS['hand-Left'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('hand.Left.'));
+  OBJECT_PATHS['light'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('light.'));
+  OBJECT_PATHS['screen'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('screen.'));
+  OBJECT_PATHS['scene'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('scene.'));
+  OBJECT_PATHS['camera'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('camera.'));
+}
+
+function readProp(path) {
+  const entry = PROP_REGISTRY[path];
+  if (!entry) return undefined;
+  let obj = entry.state();
+  for (const key of entry.keys) {
+    obj = obj[key];
+  }
+  return obj;
+}
+
+function writeProp(path, value) {
+  const entry = PROP_REGISTRY[path];
+  if (!entry) return;
+  let obj = entry.state();
+  for (let i = 0; i < entry.keys.length - 1; i++) {
+    obj = obj[entry.keys[i]];
+  }
+  obj[entry.keys[entry.keys.length - 1]] = value;
+}
+
+// ── Animation Frame Application ──
+
+function applyAnimationFrame(time) {
+  const merged = timeline.resolveAtTime(time);
+
+  const applyFns = new Set();
+  let cameraAnimated = false;
+
+  for (const [path, value] of Object.entries(merged)) {
+    writeProp(path, value);
+    const entry = PROP_REGISTRY[path];
+    if (entry) {
+      applyFns.add(entry.apply);
+      if (path.startsWith('camera.')) cameraAnimated = true;
+    }
+  }
+
+  for (const fn of applyFns) fn();
+  reassertVisibility();
+
+  // Sync sliders for whichever object is selected
+  if (selectedObject.startsWith('hand-')) syncAllHandSliders();
+  else if (selectedObject === 'light') syncLightSliders();
+  else if (selectedObject === 'screen') syncScreenSliders();
+  else if (selectedObject === 'scene') syncSceneSliders();
+
+  updatePlayhead(time);
+
+  // Update play button if playback ended
+  if (!timeline.playing) {
+    $('#btn-play').textContent = '\u25B6';
+  }
+
+  // Disable orbit controls while camera is being animated
+  if (controls) controls.enabled = !cameraAnimated;
+}
+
+// ── Keyframe Capture ──
+
+function captureKeyframe() {
+  if (!timeline) return;
+
+  // Auto-create lane if none exist
+  if (timeline.lanes.length === 0) {
+    const lane = timeline.addLane();
+    selectedLaneId = lane.id;
+  }
+
+  // Auto-select first lane if none selected
+  if (!selectedLaneId || !timeline.getLane(selectedLaneId)) {
+    selectedLaneId = timeline.lanes[0].id;
+  }
+
+  const paths = OBJECT_PATHS[selectedObject];
+  if (!paths || paths.length === 0) return;
+
+  const properties = {};
+  for (const path of paths) {
+    properties[path] = readProp(path);
+  }
+
+  timeline.addKeyframe(selectedLaneId, timeline.currentTime, properties);
+  renderTimeline();
+
+  $('#footer-status').textContent = `Keyframe added at ${timeline.currentTime.toFixed(2)}s`;
+}
+
+// ── Timeline UI ──
+
+function renderTimeline() {
+  const container = $('#timeline-lanes');
+  container.innerHTML = '';
+
+  for (const lane of timeline.lanes) {
+    const row = document.createElement('div');
+    row.className = 'timeline-lane' + (selectedLaneId === lane.id ? ' selected' : '');
+    row.dataset.laneId = lane.id;
+
+    // Lane header
+    const header = document.createElement('div');
+    header.className = 'lane-header';
+
+    const enableCb = document.createElement('input');
+    enableCb.type = 'checkbox';
+    enableCb.checked = lane.enabled;
+    enableCb.className = 'lane-enable';
+    enableCb.addEventListener('change', () => {
+      timeline.setLaneEnabled(lane.id, enableCb.checked);
+    });
+
+    const label = document.createElement('span');
+    label.className = 'lane-label';
+    label.contentEditable = true;
+    label.textContent = lane.label;
+    label.addEventListener('blur', () => {
+      timeline.setLaneLabel(lane.id, label.textContent.trim() || lane.label);
+    });
+    label.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); label.blur(); }
+    });
+
+    const del = document.createElement('span');
+    del.className = 'lane-delete';
+    del.textContent = '\u2715';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      timeline.removeLane(lane.id);
+      if (selectedLaneId === lane.id) {
+        selectedLaneId = timeline.lanes.length > 0 ? timeline.lanes[0].id : null;
+      }
+      renderTimeline();
+    });
+
+    // Click header to select lane
+    header.addEventListener('click', (e) => {
+      if (e.target === enableCb || e.target === del || e.target === label) return;
+      selectedLaneId = lane.id;
+      selectedKeyframeIdx = -1;
+      renderTimeline();
+    });
+
+    header.append(enableCb, label, del);
+
+    // Track bar
+    const track = document.createElement('div');
+    track.className = 'lane-track';
+
+    // Keyframe markers
+    for (let i = 0; i < lane.keyframes.length; i++) {
+      const kf = lane.keyframes[i];
+      const marker = document.createElement('div');
+      marker.className = 'keyframe-marker';
+      if (selectedLaneId === lane.id && selectedKeyframeIdx === i) {
+        marker.classList.add('selected');
+      }
+      marker.style.left = `${(kf.time / timeline.duration) * 100}%`;
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectedLaneId = lane.id;
+        selectedKeyframeIdx = i;
+        renderTimeline();
+      });
+      track.appendChild(marker);
+    }
+
+    // Playhead
+    const playhead = document.createElement('div');
+    playhead.className = 'timeline-playhead';
+    playhead.style.left = `${(timeline.currentTime / timeline.duration) * 100}%`;
+    track.appendChild(playhead);
+
+    // Click/drag on track to scrub
+    track.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('keyframe-marker')) return;
+      selectedLaneId = lane.id;
+      const scrub = (ev) => {
+        const rect = track.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+        timeline.seek(pct * timeline.duration);
+      };
+      scrub(e);
+      const onMove = (ev) => scrub(ev);
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    row.append(header, track);
+    container.appendChild(row);
+  }
+}
+
+function updatePlayhead(time) {
+  const pct = `${(time / timeline.duration) * 100}%`;
+  for (const ph of document.querySelectorAll('.timeline-playhead')) {
+    ph.style.left = pct;
+  }
+  const timeEl = $('#timeline-time');
+  if (timeEl) timeEl.textContent = time.toFixed(2) + 's';
+}
+
+// ── Timeline Controls ──
+
+function wireTimeline() {
+  $('#btn-play').addEventListener('click', () => {
+    timeline.toggle();
+    $('#btn-play').textContent = timeline.playing ? '\u23F8' : '\u25B6';
+  });
+
+  $('#timeline-duration').addEventListener('change', (e) => {
+    timeline.duration = Math.max(0.5, parseFloat(e.target.value) || 5);
+    renderTimeline();
+  });
+
+  $('#timeline-loop').addEventListener('change', (e) => {
+    timeline.loop = e.target.checked;
+  });
+
+  $('#btn-add-lane').addEventListener('click', () => {
+    const lane = timeline.addLane();
+    selectedLaneId = lane.id;
+    renderTimeline();
+  });
+
+  $('#btn-add-keyframe').addEventListener('click', () => {
+    captureKeyframe();
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Skip if typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.contentEditable === 'true') return;
+
+    if (e.key === ' ') {
+      e.preventDefault();
+      timeline.toggle();
+      $('#btn-play').textContent = timeline.playing ? '\u23F8' : '\u25B6';
+    }
+
+    if (e.key === 'Delete' && selectedLaneId && selectedKeyframeIdx >= 0) {
+      timeline.removeKeyframe(selectedLaneId, selectedKeyframeIdx);
+      selectedKeyframeIdx = -1;
+      renderTimeline();
+    }
+  });
+}
+
+// ── Save / Load Scene ──
+
+function saveScene() {
+  const data = {
+    version: 1,
+    scene: {
+      handStates: {
+        Right: JSON.parse(JSON.stringify(handStates.Right)),
+        Left: JSON.parse(JSON.stringify(handStates.Left)),
+      },
+      lightState: JSON.parse(JSON.stringify(lightState)),
+      screenState: JSON.parse(JSON.stringify(screenState)),
+      sceneState: JSON.parse(JSON.stringify(sceneState)),
+      camera: {
+        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+        target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      },
+    },
+    animation: timeline.toJSON(),
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = 'hand-scene.json';
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+
+  $('#footer-status').textContent = 'Scene saved';
+}
+
+function loadScene(jsonText) {
+  try {
+    const data = JSON.parse(jsonText);
+
+    // Restore hand states
+    for (const slotKey of ['Right', 'Left']) {
+      const saved = data.scene?.handStates?.[slotKey];
+      if (!saved) continue;
+
+      const current = handStates[slotKey];
+      const handednessChanged = current.handedness !== saved.handedness;
+
+      Object.assign(current, JSON.parse(JSON.stringify(saved)));
+
+      // Recreate clone if handedness changed
+      if (handednessChanged && slotHands[slotKey]) {
+        scene.remove(slotHands[slotKey].group);
+        slotHands[slotKey] = createSlotHand(current.handedness);
+        scene.add(slotHands[slotKey].group);
+      }
+    }
+
+    // Restore light/screen/scene state
+    if (data.scene?.lightState) Object.assign(lightState, JSON.parse(JSON.stringify(data.scene.lightState)));
+    if (data.scene?.screenState) Object.assign(screenState, JSON.parse(JSON.stringify(data.scene.screenState)));
+    if (data.scene?.sceneState) Object.assign(sceneState, JSON.parse(JSON.stringify(data.scene.sceneState)));
+
+    // Restore camera
+    if (data.scene?.camera) {
+      camera.position.set(data.scene.camera.position.x, data.scene.camera.position.y, data.scene.camera.position.z);
+      controls.target.set(data.scene.camera.target.x, data.scene.camera.target.y, data.scene.camera.target.z);
+      controls.update();
+    }
+
+    // Apply all state
+    updateLight();
+    updateScreen();
+    updateAmbient();
+    applyAllHands();
+
+    // Restore animation
+    if (data.animation) {
+      timeline = TimelineEngine.fromJSON(data.animation, applyAnimationFrame);
+      selectedLaneId = timeline.lanes.length > 0 ? timeline.lanes[0].id : null;
+      selectedKeyframeIdx = -1;
+    }
+
+    // Sync all UI
+    syncAllHandSliders();
+    syncLightSliders();
+    syncScreenSliders();
+    syncSceneSliders();
+    buildObjectList();
+    renderTimeline();
+
+    // Sync timeline controls
+    $('#timeline-duration').value = timeline.duration;
+    $('#timeline-loop').checked = timeline.loop;
+
+    $('#footer-status').textContent = 'Scene loaded';
+  } catch (err) {
+    console.error('Failed to load scene:', err);
+    $('#footer-status').textContent = `Load failed: ${err.message}`;
+  }
+}
+
 // ── PNG Export ──
 
 function exportPNG() {
@@ -751,12 +1236,22 @@ function resizeRenderer() {
   renderer.setSize(w, h);
 }
 
+// ── Timeline Init ──
+
+function initTimeline() {
+  buildPropRegistry();
+  timeline = new TimelineEngine(applyAnimationFrame);
+  wireTimeline();
+  renderTimeline();
+}
+
 // ── Init ──
 
 async function init() {
   initScene();
   wireControls();
   wireLibrary();
+  initTimeline();
   buildObjectList();
   showPropertiesFor('hand-Right');
   animate();

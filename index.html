@@ -331,10 +331,32 @@
 
     </aside>
 
+    <!-- Timeline -->
+    <div class="timeline-panel" id="timeline-panel">
+      <div class="timeline-transport">
+        <button id="btn-play" class="btn btn-sm">&#9654;</button>
+        <span id="timeline-time" class="timeline-time">0.00s</span>
+        <label class="timeline-label">Dur</label>
+        <input type="number" id="timeline-duration" class="timeline-input" value="5" min="0.5" max="60" step="0.5">
+        <label class="timeline-label">
+          <input type="checkbox" id="timeline-loop" checked> Loop
+        </label>
+        <div style="flex:1"></div>
+        <button id="btn-add-lane" class="btn btn-sm">+ Lane</button>
+        <button id="btn-add-keyframe" class="btn btn-sm btn-primary">+ Key</button>
+      </div>
+      <div class="timeline-lanes" id="timeline-lanes"></div>
+    </div>
+
     <!-- Footer -->
     <footer class="footer">
       <span id="footer-status">Ready</span>
-      <button id="btn-export-png" class="btn btn-sm btn-primary">PNG Screenshot</button>
+      <div style="display:flex;gap:6px;">
+        <button id="btn-save-scene" class="btn btn-sm">Save Scene</button>
+        <button id="btn-load-scene" class="btn btn-sm">Load Scene</button>
+        <input type="file" id="file-scene" accept=".json" style="display:none;">
+        <button id="btn-export-png" class="btn btn-sm btn-primary">PNG Screenshot</button>
+      </div>
     </footer>
 
   </div>

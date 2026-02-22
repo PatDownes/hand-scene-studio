@@ -35,10 +35,11 @@ body {
 .app {
   display: grid;
   grid-template-columns: var(--panel-width) 1fr var(--panel-width);
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   grid-template-areas:
     "header   header   header"
     "left     viewport right"
+    "timeline timeline timeline"
     "footer   footer   footer";
   height: 100vh;
 }
@@ -434,4 +435,156 @@ input[type="range"]::-moz-range-thumb {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent-dim);
+}
+
+/* ── Timeline Panel ── */
+
+.timeline-panel {
+  grid-area: timeline;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.timeline-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  height: 36px;
+}
+
+.timeline-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  min-width: 48px;
+  color: var(--accent);
+}
+
+.timeline-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timeline-input {
+  width: 48px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 2px 4px;
+  text-align: center;
+}
+
+.timeline-lanes {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.timeline-lane {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+  height: 32px;
+}
+
+.timeline-lane.selected .lane-header {
+  border-left: 2px solid var(--accent);
+}
+
+.lane-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  width: 180px;
+  min-width: 180px;
+  background: var(--bg-input);
+  border-right: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.lane-header:hover {
+  background: var(--bg-hover);
+}
+
+.lane-enable {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.lane-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+  min-width: 0;
+}
+
+.lane-delete {
+  cursor: pointer;
+  color: var(--danger);
+  opacity: 0.4;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.lane-delete:hover {
+  opacity: 1;
+}
+
+.lane-track {
+  flex: 1;
+  position: relative;
+  background: var(--bg-primary);
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.keyframe-marker {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  transform: translate(-50%, -50%) rotate(45deg);
+  cursor: pointer;
+  z-index: 1;
+}
+
+.keyframe-marker:hover {
+  background: #fff;
+}
+
+.keyframe-marker.selected {
+  background: #fff;
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--danger);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.timeline-playhead::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 7px;
+  height: 7px;
+  background: var(--danger);
+  border-radius: 50%;
 }
