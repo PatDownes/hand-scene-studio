@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hand Scene Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="app">
+
+    <!-- Header -->
+    <header class="header">
+      <h1><span>Hand</span> Scene Studio</h1>
+      <div id="status-text" class="loading">
+        <div class="spinner"></div>
+        Loading hand models…
+      </div>
+    </header>
+
+    <!-- Left Panel -->
+    <aside class="panel panel-left">
+
+      <!-- Scene Objects -->
+      <div class="panel-section">
+        <h3>Scene Objects</h3>
+        <div id="object-list" class="object-list"></div>
+      </div>
+
+      <!-- Pose Library -->
+      <div class="panel-section">
+        <h3>Pose Library</h3>
+        <div id="skeleton-list" class="skeleton-list">
+          <div class="loading" style="color: var(--text-secondary); font-size: 12px;">No library loaded</div>
+        </div>
+        <div style="margin-top: 8px;">
+          <button id="btn-load-library" class="btn btn-sm">Load Library…</button>
+          <input type="file" id="file-library" accept=".json" style="display: none;">
+        </div>
+      </div>
+    </aside>
+
+    <!-- Viewport -->
+    <main class="viewport-area" id="viewport"></main>
+
+    <!-- Right Panel -->
+    <aside class="panel panel-right">
+
+      <!-- Hand Properties -->
+      <div id="props-hand" class="props-panel">
+        <div class="panel-section">
+          <h3>Hand</h3>
+
+          <div class="control-group">
+            <label>Handedness</label>
+            <div class="toggle-group">
+              <button class="btn btn-sm active" data-hand="Right">Right</button>
+              <button class="btn btn-sm" data-hand="Left">Left</button>
+            </div>
+          </div>
+
+          <div class="subsection">Position</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="hand-pos-x" min="-2" max="2" step="0.01" value="0">
+            <span class="value" data-for="hand-pos-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="hand-pos-y" min="-1" max="2" step="0.01" value="0.25">
+            <span class="value" data-for="hand-pos-y">0.25</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="hand-pos-z" min="-2" max="2" step="0.01" value="0">
+            <span class="value" data-for="hand-pos-z">0.00</span>
+          </div>
+
+          <div class="control-group">
+            <label>Scale</label>
+            <input type="range" id="hand-scale" min="0.5" max="5" step="0.1" value="2">
+            <span class="value" data-for="hand-scale">2.0</span>
+          </div>
+
+          <div class="control-group">
+            <label>Color</label>
+            <input type="color" id="hand-color" value="#ffffff">
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Finger Curl</h3>
+          <div class="finger-pose-grid">
+            <label>Thumb</label>
+            <input type="range" id="curl-thumb" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="curl-thumb">0.00</span>
+
+            <label>Index</label>
+            <input type="range" id="curl-index" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="curl-index">0.00</span>
+
+            <label>Middle</label>
+            <input type="range" id="curl-middle" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="curl-middle">0.00</span>
+
+            <label>Ring</label>
+            <input type="range" id="curl-ring" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="curl-ring">0.00</span>
+
+            <label>Pinky</label>
+            <input type="range" id="curl-pinky" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="curl-pinky">0.00</span>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Finger Spread</h3>
+          <div class="finger-pose-grid">
+            <label>Thumb</label>
+            <input type="range" id="spread-thumb" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="spread-thumb">0.50</span>
+
+            <label>Index</label>
+            <input type="range" id="spread-index" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="spread-index">0.50</span>
+
+            <label>Middle</label>
+            <input type="range" id="spread-middle" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="spread-middle">0.50</span>
+
+            <label>Ring</label>
+            <input type="range" id="spread-ring" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="spread-ring">0.50</span>
+
+            <label>Pinky</label>
+            <input type="range" id="spread-pinky" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="spread-pinky">0.50</span>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Thumb CMC</h3>
+          <div class="control-group">
+            <label>CMC Flex</label>
+            <input type="range" id="cmc-flex" min="-45" max="45" step="1" value="0">
+            <span class="value" data-for="cmc-flex">0</span>
+          </div>
+          <div class="control-group">
+            <label>Sweep</label>
+            <input type="range" id="thumb-sweep" min="-45" max="45" step="1" value="0">
+            <span class="value" data-for="thumb-sweep">0</span>
+          </div>
+          <div class="control-group">
+            <label>CMC Rot</label>
+            <input type="range" id="cmc-rotation" min="-90" max="90" step="1" value="0">
+            <span class="value" data-for="cmc-rotation">0</span>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Wrist</h3>
+          <div class="control-group">
+            <label>Flex</label>
+            <input type="range" id="wrist-flex" min="-90" max="90" step="1" value="0">
+            <span class="value" data-for="wrist-flex">0</span>
+          </div>
+          <div class="control-group">
+            <label>Deviation</label>
+            <input type="range" id="wrist-deviation" min="-45" max="45" step="1" value="0">
+            <span class="value" data-for="wrist-deviation">0</span>
+          </div>
+          <div class="control-group">
+            <label>Pronation</label>
+            <input type="range" id="wrist-pronation" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="wrist-pronation">0</span>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Rotation</h3>
+          <div class="control-group">
+            <label>Rot X</label>
+            <input type="range" id="hand-rot-x" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="hand-rot-x">0</span>
+          </div>
+          <div class="control-group">
+            <label>Rot Y</label>
+            <input type="range" id="hand-rot-y" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="hand-rot-y">0</span>
+          </div>
+          <div class="control-group">
+            <label>Rot Z</label>
+            <input type="range" id="hand-rot-z" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="hand-rot-z">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Light Properties -->
+      <div id="props-light" class="props-panel">
+        <div class="panel-section">
+          <h3>Spot Light</h3>
+
+          <div class="control-group">
+            <label>Intensity</label>
+            <input type="range" id="light-intensity" min="0" max="20" step="0.1" value="8">
+            <span class="value" data-for="light-intensity">8.0</span>
+          </div>
+          <div class="control-group">
+            <label>Angle</label>
+            <input type="range" id="light-angle" min="5" max="90" step="1" value="45">
+            <span class="value" data-for="light-angle">45°</span>
+          </div>
+          <div class="control-group">
+            <label>Penumbra</label>
+            <input type="range" id="light-penumbra" min="0" max="1" step="0.01" value="0.3">
+            <span class="value" data-for="light-penumbra">0.30</span>
+          </div>
+          <div class="control-group">
+            <label>Color</label>
+            <input type="color" id="light-color" value="#ffffff">
+          </div>
+
+          <div class="subsection">Position</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="light-pos-x" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="light-pos-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="light-pos-y" min="-1" max="4" step="0.01" value="1">
+            <span class="value" data-for="light-pos-y">1.00</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="light-pos-z" min="-3" max="3" step="0.01" value="1">
+            <span class="value" data-for="light-pos-z">1.00</span>
+          </div>
+
+          <div class="subsection">Target</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="light-target-x" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="light-target-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="light-target-y" min="-1" max="3" step="0.01" value="0">
+            <span class="value" data-for="light-target-y">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="light-target-z" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="light-target-z">0.00</span>
+          </div>
+
+          <div class="subsection">Shadow</div>
+          <div class="control-group">
+            <label>Map Size</label>
+            <select id="light-shadow-size" class="btn btn-sm" style="flex:1;">
+              <option value="512">512</option>
+              <option value="1024" selected>1024</option>
+              <option value="2048">2048</option>
+              <option value="4096">4096</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Screen Properties -->
+      <div id="props-screen" class="props-panel">
+        <div class="panel-section">
+          <h3>Projection Screen</h3>
+
+          <div class="control-group">
+            <label>Width</label>
+            <input type="range" id="screen-width" min="0.5" max="5" step="0.1" value="2">
+            <span class="value" data-for="screen-width">2.0</span>
+          </div>
+          <div class="control-group">
+            <label>Height</label>
+            <input type="range" id="screen-height" min="0.5" max="5" step="0.1" value="1.5">
+            <span class="value" data-for="screen-height">1.5</span>
+          </div>
+          <div class="control-group">
+            <label>Color</label>
+            <input type="color" id="screen-color" value="#f0f0f0">
+          </div>
+
+          <div class="subsection">Position</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="screen-pos-x" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="screen-pos-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="screen-pos-y" min="-1" max="3" step="0.01" value="0.5">
+            <span class="value" data-for="screen-pos-y">0.50</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="screen-pos-z" min="-5" max="2" step="0.01" value="-1">
+            <span class="value" data-for="screen-pos-z">-1.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene Properties (always visible) -->
+      <div class="panel-section">
+        <h3>Scene</h3>
+        <div class="control-group">
+          <label>Ambient</label>
+          <input type="range" id="ambient-intensity" min="0" max="2" step="0.01" value="0.3">
+          <span class="value" data-for="ambient-intensity">0.30</span>
+        </div>
+        <div class="control-group">
+          <label>Background</label>
+          <input type="color" id="scene-bg" value="#0f0f14">
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span id="footer-status">Ready</span>
+      <button id="btn-export-png" class="btn btn-sm btn-primary">PNG Screenshot</button>
+    </footer>
+
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
