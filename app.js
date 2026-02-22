@@ -636,16 +636,32 @@ function wireControls() {
 
   // ── Save / Load Scene ──
   $('#btn-save-scene').addEventListener('click', saveScene);
-  $('#btn-load-scene').addEventListener('click', () => $('#file-scene').click());
-  $('#file-scene').addEventListener('change', (e) => {
+  $('#btn-load-scene').addEventListener('click', async () => {
+    // Use File System Access API if available for open dialog
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'JSON Scene File', accept: { 'application/json': ['.json'] } }],
+        });
+        const file = await handle.getFile();
+        loadScene(await file.text());
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        // Fall through to input element
+      }
+    }
+    $('#file-scene').click();
+  });
+  $('#file-scene').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    file.text().then(text => {
-      loadScene(text);
-    }).catch(err => {
+    try {
+      loadScene(await file.text());
+    } catch (err) {
       console.error('Failed to load scene:', err);
       $('#footer-status').textContent = 'Failed to load scene file';
-    });
+    }
     e.target.value = '';
   });
 }
@@ -1104,7 +1120,7 @@ function wireTimeline() {
 
 // ── Save / Load Scene ──
 
-function saveScene() {
+async function saveScene() {
   const data = {
     version: 1,
     scene: {
@@ -1124,6 +1140,29 @@ function saveScene() {
   };
 
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+
+  // Use File System Access API if available (Chrome/Edge) for save-as dialog
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: 'hand-scene.json',
+        types: [{
+          description: 'JSON Scene File',
+          accept: { 'application/json': ['.json'] },
+        }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      $('#footer-status').textContent = 'Scene saved';
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // Fall through to legacy download
+    }
+  }
+
+  // Fallback: auto-download to Downloads folder
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.download = 'hand-scene.json';
