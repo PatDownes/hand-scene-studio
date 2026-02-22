@@ -2,22 +2,30 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { HandViewer3D } from '../hand-pose-studio/hand-viewer-3d.js';
 import { SkeletonStore } from '../hand-pose-studio/skeleton-store.js';
 
 // ── State ──
 
-const handState = {
-  handedness: 'Right',
-  position: { x: 0, y: 0.25, z: 0 },
-  scale: 2,
-  color: '#ffffff',
-  curls: { thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0 },
-  spread: { thumb: 0.5, index: 0.5, middle: 0.5, ring: 0.5, pinky: 0.5 },
-  wrist: { flex: 0, deviation: 0, pronation: 0 },
-  cmc: { flex: 0, sweep: 0, rotation: 0 },
-  rotation: { x: 0, y: 0, z: 0 },
-};
+function defaultHandState(handedness) {
+  return {
+    handedness,      // which GLB model to use ('Right' or 'Left')
+    enabled: handedness === 'Right',
+    position: { x: handedness === 'Left' ? -0.15 : 0.15, y: 0.25, z: 0 },
+    scale: 2,
+    color: '#ffffff',
+    curls: { thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0 },
+    spread: { thumb: 0.5, index: 0.5, middle: 0.5, ring: 0.5, pinky: 0.5 },
+    wrist: { flex: 0, deviation: 0, pronation: 0 },
+    cmc: { flex: 0, sweep: 0, rotation: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+  };
+}
+
+const handStates = { Right: defaultHandState('Right'), Left: defaultHandState('Left') };
+let selectedHand = 'Right';
+function hs() { return handStates[selectedHand]; }
 
 const lightState = {
   intensity: 8,
@@ -41,7 +49,28 @@ const sceneState = {
   background: '#0f0f14',
 };
 
-let selectedObject = 'hand';
+let selectedObject = 'hand-Right';
+
+// Per-slot cloned hand groups (independent of originals in viewer3d)
+const slotHands = { Right: null, Left: null };
+
+function createSlotHand(handedness) {
+  const original = viewer3d.hands[handedness];
+  const group = SkeletonUtils.clone(original.group);
+
+  let mesh, forearmMesh;
+  group.traverse(child => {
+    if (child.isSkinnedMesh) mesh = child;
+    else if (child.isMesh && !child.isSkinnedMesh) forearmMesh = child;
+  });
+
+  // Enable shadow casting on cloned meshes
+  group.traverse(child => {
+    if (child.isMesh || child.isSkinnedMesh) child.castShadow = true;
+  });
+
+  return { group, mesh, forearmMesh };
+}
 
 // ── Three.js refs ──
 
@@ -145,23 +174,14 @@ async function initHands() {
   viewer3d = new HandViewer3D(offscreen);
   await viewer3d.init();
 
-  // Reparent both hand groups into our scene
-  for (const handedness of ['Left', 'Right']) {
-    const hand = viewer3d.hands[handedness];
-    if (!hand) continue;
-
-    scene.add(hand.group);
-
-    // Enable shadow casting on all meshes in the hand group
-    hand.group.traverse((child) => {
-      if (child.isMesh || child.isSkinnedMesh) {
-        child.castShadow = true;
-      }
-    });
+  // Clone hand meshes for each slot (originals stay offscreen for posing)
+  for (const slotKey of ['Right', 'Left']) {
+    slotHands[slotKey] = createSlotHand(handStates[slotKey].handedness);
+    scene.add(slotHands[slotKey].group);
   }
 
-  // Apply initial pose
-  applyHandPose();
+  // Apply initial pose for both hands
+  applyAllHands();
 
   // Update status
   const statusEl = $('#status-text');
@@ -174,41 +194,79 @@ async function initHands() {
 
 // ── Hand Pose ──
 
-function applyHandPose() {
-  if (!viewer3d || !viewer3d.ready) return;
+function poseOneHand(slotKey) {
+  const st = handStates[slotKey];
+  const clone = slotHands[slotKey];
+  if (!clone) return;
 
-  viewer3d.poseFromMIDI(
-    handState.curls,
-    handState.spread,
-    handState.wrist,
-    {
-      handedness: handState.handedness,
-      cmcFlex: handState.cmc.flex,
-      thumbSweep: handState.cmc.sweep,
-      cmcRotation: handState.cmc.rotation,
-      rotationX: handState.rotation.x,
-      rotationY: handState.rotation.y,
-      rotationZ: handState.rotation.z,
-    }
-  );
+  // Pose the original (offscreen) — resets to rest first
+  viewer3d.poseFromMIDI(st.curls, st.spread, st.wrist, {
+    handedness: st.handedness,
+    cmcFlex: st.cmc.flex,
+    thumbSweep: st.cmc.sweep,
+    cmcRotation: st.cmc.rotation,
+    rotationX: st.rotation.x,
+    rotationY: st.rotation.y,
+    rotationZ: st.rotation.z,
+  });
 
-  // Position group but keep group.scale=1 — scale the mesh instead.
-  // Scaling the group amplifies bone-position displacements from rest in
-  // the skinning computation, which distorts poseFromLandmarks results.
-  // Scaling the mesh applies after skinning (in modelViewMatrix) so the
-  // bone matrix computation stays clean.
-  const hand = viewer3d.hands[handState.handedness];
-  if (hand) {
-    hand.group.position.set(handState.position.x, handState.position.y, handState.position.z);
-    hand.mesh.scale.setScalar(handState.scale);
-    hand.forearmMesh.scale.setScalar(handState.scale);
+  const original = viewer3d.hands[st.handedness];
 
-    hand.group.updateMatrixWorld(true);
-    hand.mesh.skeleton.update();
+  // Copy bone transforms from original to clone
+  const origBones = original.mesh.skeleton.bones;
+  const cloneBones = clone.mesh.skeleton.bones;
+  for (let i = 0; i < origBones.length; i++) {
+    cloneBones[i].quaternion.copy(origBones[i].quaternion);
+    cloneBones[i].position.copy(origBones[i].position);
   }
 
-  // Apply color
-  viewer3d.setColor(handState.color);
+  // Copy group quaternion (baseOrientation + user rotation from poseFromMIDI)
+  clone.group.quaternion.copy(original.group.quaternion);
+
+  // Slot-specific position, scale, color
+  clone.group.position.set(st.position.x, st.position.y, st.position.z);
+  clone.mesh.scale.setScalar(st.scale);
+  if (clone.forearmMesh) clone.forearmMesh.scale.setScalar(st.scale);
+  const color = new THREE.Color(st.color);
+  clone.mesh.material.color.set(color);
+  if (clone.forearmMesh) clone.forearmMesh.material.color.set(color);
+
+  clone.group.updateMatrixWorld(true);
+  clone.mesh.skeleton.update();
+}
+
+function reassertVisibility() {
+  for (const slotKey of ['Right', 'Left']) {
+    if (slotHands[slotKey]) slotHands[slotKey].group.visible = handStates[slotKey].enabled;
+  }
+}
+
+function applyAllHands() {
+  if (!viewer3d || !viewer3d.ready) return;
+  for (const h of ['Right', 'Left']) {
+    if (handStates[h].enabled) poseOneHand(h);
+  }
+  reassertVisibility();
+}
+
+function applySelectedHand() {
+  if (!viewer3d || !viewer3d.ready) return;
+  poseOneHand(selectedHand);
+  reassertVisibility();
+}
+
+// ── Pose Mirroring ──
+
+function mirrorPoseParams(st) {
+  for (const finger of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
+    st.spread[finger] = 1 - st.spread[finger];
+  }
+  st.wrist.deviation = -st.wrist.deviation;
+  st.wrist.pronation = -st.wrist.pronation;
+  st.cmc.sweep = -st.cmc.sweep;
+  st.cmc.rotation = -st.cmc.rotation;
+  st.rotation.y = -st.rotation.y;
+  st.rotation.z = -st.rotation.z;
 }
 
 // ── Light ──
@@ -250,7 +308,8 @@ function updateAmbient() {
 // ── Object List ──
 
 const sceneObjects = [
-  { id: 'hand', label: 'Hand', icon: '✋' },
+  { id: 'hand-Right', slotKey: 'Right', icon: '🤚' },
+  { id: 'hand-Left',  slotKey: 'Left',  icon: '🤚' },
   { id: 'light', label: 'Spot Light', icon: '💡' },
   { id: 'screen', label: 'Screen', icon: '🖥' },
 ];
@@ -261,12 +320,39 @@ function buildObjectList() {
   for (const obj of sceneObjects) {
     const item = document.createElement('div');
     item.className = 'object-item' + (selectedObject === obj.id ? ' selected' : '');
-    item.innerHTML = `<span class="icon">${obj.icon}</span><span class="label">${obj.label}</span>`;
-    item.addEventListener('click', () => {
-      selectedObject = obj.id;
-      buildObjectList();
-      showPropertiesFor(obj.id);
-    });
+
+    if (obj.slotKey) {
+      const st = handStates[obj.slotKey];
+      const eyeIcon = st.enabled ? '👁' : '👁‍🗨';
+      const label = `Hand (${st.handedness})`;
+
+      item.innerHTML = `<span class="icon">${obj.icon}</span><span class="label">${label}</span><span class="visibility-toggle">${eyeIcon}</span>`;
+
+      // Eye toggle — toggle enabled, rebuild list, apply
+      item.querySelector('.visibility-toggle').addEventListener('click', (e) => {
+        e.stopPropagation();
+        st.enabled = !st.enabled;
+        applyAllHands();
+        buildObjectList();
+      });
+
+      // Body click — select this hand for editing
+      item.addEventListener('click', () => {
+        selectedObject = obj.id;
+        selectedHand = obj.slotKey;
+        syncAllHandSliders();
+        buildObjectList();
+        showPropertiesFor(obj.id);
+      });
+    } else {
+      item.innerHTML = `<span class="icon">${obj.icon}</span><span class="label">${obj.label}</span>`;
+      item.addEventListener('click', () => {
+        selectedObject = obj.id;
+        buildObjectList();
+        showPropertiesFor(obj.id);
+      });
+    }
+
     list.appendChild(item);
   }
 }
@@ -275,7 +361,9 @@ function showPropertiesFor(id) {
   for (const panel of $$('.props-panel')) {
     panel.classList.remove('active');
   }
-  const target = $(`#props-${id}`);
+  // Both hand-Right and hand-Left map to the same props-hand panel
+  const panelId = id.startsWith('hand-') ? 'hand' : id;
+  const target = $(`#props-${panelId}`);
   if (target) target.classList.add('active');
 }
 
@@ -388,64 +476,88 @@ function syncSlider(id, value) {
 }
 
 function syncAllHandSliders() {
+  const s = hs();
   for (const finger of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
-    syncSlider(`curl-${finger}`, handState.curls[finger]);
-    syncSlider(`spread-${finger}`, handState.spread[finger]);
+    syncSlider(`curl-${finger}`, s.curls[finger]);
+    syncSlider(`spread-${finger}`, s.spread[finger]);
   }
-  syncSlider('cmc-flex', handState.cmc.flex);
-  syncSlider('thumb-sweep', handState.cmc.sweep);
-  syncSlider('cmc-rotation', handState.cmc.rotation);
-  syncSlider('wrist-flex', handState.wrist.flex);
-  syncSlider('wrist-deviation', handState.wrist.deviation);
-  syncSlider('wrist-pronation', handState.wrist.pronation);
-  syncSlider('hand-rot-x', handState.rotation.x);
-  syncSlider('hand-rot-y', handState.rotation.y);
-  syncSlider('hand-rot-z', handState.rotation.z);
+  syncSlider('cmc-flex', s.cmc.flex);
+  syncSlider('thumb-sweep', s.cmc.sweep);
+  syncSlider('cmc-rotation', s.cmc.rotation);
+  syncSlider('wrist-flex', s.wrist.flex);
+  syncSlider('wrist-deviation', s.wrist.deviation);
+  syncSlider('wrist-pronation', s.wrist.pronation);
+  syncSlider('hand-rot-x', s.rotation.x);
+  syncSlider('hand-rot-y', s.rotation.y);
+  syncSlider('hand-rot-z', s.rotation.z);
+  syncSlider('hand-pos-x', s.position.x);
+  syncSlider('hand-pos-y', s.position.y);
+  syncSlider('hand-pos-z', s.position.z);
+  syncSlider('hand-scale', s.scale);
+  $('#hand-color').value = s.color;
+  // Sync handedness toggle buttons
+  for (const b of $$('.toggle-group [data-hand]')) {
+    b.classList.toggle('active', b.dataset.hand === s.handedness);
+  }
+  const title = $('#hand-panel-title');
+  if (title) title.textContent = `Hand (${s.handedness})`;
 }
 
 function wireControls() {
-  // ── Hand position ──
-  bindRange('hand-pos-x', () => handState.position.x, (v) => { handState.position.x = v; applyHandPose(); });
-  bindRange('hand-pos-y', () => handState.position.y, (v) => { handState.position.y = v; applyHandPose(); });
-  bindRange('hand-pos-z', () => handState.position.z, (v) => { handState.position.z = v; applyHandPose(); });
-  bindRange('hand-scale', () => handState.scale, (v) => { handState.scale = v; applyHandPose(); });
-
-  // ── Hand color ──
-  $('#hand-color').addEventListener('input', (e) => {
-    handState.color = e.target.value;
-    applyHandPose();
-  });
-
   // ── Handedness toggle ──
   for (const btn of $$('.toggle-group [data-hand]')) {
     btn.addEventListener('click', () => {
-      handState.handedness = btn.dataset.hand;
-      for (const b of $$('.toggle-group [data-hand]')) b.classList.remove('active');
-      btn.classList.add('active');
-      applyHandPose();
+      const newHandedness = btn.dataset.hand;
+      const st = hs();
+      if (st.handedness === newHandedness) return;
+
+      // Mirror pose params so pose looks correct on the new GLB model
+      mirrorPoseParams(st);
+      st.handedness = newHandedness;
+
+      // Remove old clone, create new from the new GLB
+      scene.remove(slotHands[selectedHand].group);
+      slotHands[selectedHand] = createSlotHand(newHandedness);
+      scene.add(slotHands[selectedHand].group);
+
+      syncAllHandSliders();
+      applySelectedHand();
+      buildObjectList();
     });
   }
 
+  // ── Hand position ──
+  bindRange('hand-pos-x', () => hs().position.x, (v) => { hs().position.x = v; applySelectedHand(); });
+  bindRange('hand-pos-y', () => hs().position.y, (v) => { hs().position.y = v; applySelectedHand(); });
+  bindRange('hand-pos-z', () => hs().position.z, (v) => { hs().position.z = v; applySelectedHand(); });
+  bindRange('hand-scale', () => hs().scale, (v) => { hs().scale = v; applySelectedHand(); });
+
+  // ── Hand color ──
+  $('#hand-color').addEventListener('input', (e) => {
+    hs().color = e.target.value;
+    applySelectedHand();
+  });
+
   // ── Finger curls ──
   for (const finger of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
-    bindRange(`curl-${finger}`, () => handState.curls[finger], (v) => { handState.curls[finger] = v; applyHandPose(); });
-    bindRange(`spread-${finger}`, () => handState.spread[finger], (v) => { handState.spread[finger] = v; applyHandPose(); });
+    bindRange(`curl-${finger}`, () => hs().curls[finger], (v) => { hs().curls[finger] = v; applySelectedHand(); });
+    bindRange(`spread-${finger}`, () => hs().spread[finger], (v) => { hs().spread[finger] = v; applySelectedHand(); });
   }
 
   // ── CMC ──
-  bindRange('cmc-flex', () => handState.cmc.flex, (v) => { handState.cmc.flex = v; applyHandPose(); });
-  bindRange('thumb-sweep', () => handState.cmc.sweep, (v) => { handState.cmc.sweep = v; applyHandPose(); });
-  bindRange('cmc-rotation', () => handState.cmc.rotation, (v) => { handState.cmc.rotation = v; applyHandPose(); });
+  bindRange('cmc-flex', () => hs().cmc.flex, (v) => { hs().cmc.flex = v; applySelectedHand(); });
+  bindRange('thumb-sweep', () => hs().cmc.sweep, (v) => { hs().cmc.sweep = v; applySelectedHand(); });
+  bindRange('cmc-rotation', () => hs().cmc.rotation, (v) => { hs().cmc.rotation = v; applySelectedHand(); });
 
   // ── Wrist ──
-  bindRange('wrist-flex', () => handState.wrist.flex, (v) => { handState.wrist.flex = v; applyHandPose(); });
-  bindRange('wrist-deviation', () => handState.wrist.deviation, (v) => { handState.wrist.deviation = v; applyHandPose(); });
-  bindRange('wrist-pronation', () => handState.wrist.pronation, (v) => { handState.wrist.pronation = v; applyHandPose(); });
+  bindRange('wrist-flex', () => hs().wrist.flex, (v) => { hs().wrist.flex = v; applySelectedHand(); });
+  bindRange('wrist-deviation', () => hs().wrist.deviation, (v) => { hs().wrist.deviation = v; applySelectedHand(); });
+  bindRange('wrist-pronation', () => hs().wrist.pronation, (v) => { hs().wrist.pronation = v; applySelectedHand(); });
 
   // ── Rotation ──
-  bindRange('hand-rot-x', () => handState.rotation.x, (v) => { handState.rotation.x = v; applyHandPose(); });
-  bindRange('hand-rot-y', () => handState.rotation.y, (v) => { handState.rotation.y = v; applyHandPose(); });
-  bindRange('hand-rot-z', () => handState.rotation.z, (v) => { handState.rotation.z = v; applyHandPose(); });
+  bindRange('hand-rot-x', () => hs().rotation.x, (v) => { hs().rotation.x = v; applySelectedHand(); });
+  bindRange('hand-rot-y', () => hs().rotation.y, (v) => { hs().rotation.y = v; applySelectedHand(); });
+  bindRange('hand-rot-z', () => hs().rotation.z, (v) => { hs().rotation.z = v; applySelectedHand(); });
 
   // ── Light ──
   bindRange('light-intensity', () => lightState.intensity, (v) => { lightState.intensity = v; updateLight(); });
@@ -536,54 +648,60 @@ function renderSkeletonList() {
     item.className = 'skeleton-item';
     item.textContent = skeleton.label || `Pose ${skeleton.id}`;
     item.addEventListener('click', () => {
+      const s = hs();
+
       if (skeleton.poseParams) {
         // Use poseFromMIDI with stored parameters — perfect reproduction
         const p = skeleton.poseParams;
-        handState.curls = { ...p.curls };
-        handState.spread = { ...p.spread };
-        handState.wrist = {
+        s.curls = { ...p.curls };
+        s.spread = { ...p.spread };
+        s.wrist = {
           flex: p.wristFlex ?? 0,
           deviation: p.wristDeviation ?? 0,
           pronation: p.wristPronation ?? 0,
         };
-        handState.cmc = {
+        s.cmc = {
           flex: p.cmcFlex ?? 0,
           sweep: p.thumbSweep ?? 0,
           rotation: p.cmcRotation ?? 0,
         };
-        if (skeleton.handedness) {
-          handState.handedness = skeleton.handedness;
-          for (const b of $$('.toggle-group [data-hand]')) {
-            b.classList.toggle('active', b.dataset.hand === skeleton.handedness);
-          }
-        }
         syncAllHandSliders();
-        applyHandPose();
+        applySelectedHand();
       } else {
         // Fallback: poseFromLandmarks for legacy skeletons without MIDI data
         viewer3d.poseFromLandmarks(skeleton.landmarks, {
-          handedness: handState.handedness,
+          handedness: s.handedness,
         });
 
-        const hand = viewer3d.hands[handState.handedness];
-        if (hand) {
-          hand.group.position.set(
-            handState.position.x, handState.position.y, handState.position.z
-          );
-          hand.mesh.scale.setScalar(handState.scale);
-          hand.forearmMesh.scale.setScalar(handState.scale);
-          hand.group.updateMatrixWorld(true);
-          hand.mesh.skeleton.update();
+        // Copy bone transforms from original to clone
+        const original = viewer3d.hands[s.handedness];
+        const clone = slotHands[selectedHand];
+        if (original && clone) {
+          const origBones = original.mesh.skeleton.bones;
+          const cloneBones = clone.mesh.skeleton.bones;
+          for (let i = 0; i < origBones.length; i++) {
+            cloneBones[i].quaternion.copy(origBones[i].quaternion);
+            cloneBones[i].position.copy(origBones[i].position);
+          }
+          clone.group.quaternion.copy(original.group.quaternion);
+          clone.group.position.set(s.position.x, s.position.y, s.position.z);
+          clone.mesh.scale.setScalar(s.scale);
+          if (clone.forearmMesh) clone.forearmMesh.scale.setScalar(s.scale);
+          const color = new THREE.Color(s.color);
+          clone.mesh.material.color.set(color);
+          if (clone.forearmMesh) clone.forearmMesh.material.color.set(color);
+          clone.group.updateMatrixWorld(true);
+          clone.mesh.skeleton.update();
         }
 
-        viewer3d.setColor(handState.color);
+        reassertVisibility();
 
         // Update sliders with approximate MIDI values for display
         const midi = landmarksToMIDI(skeleton.landmarks);
-        handState.curls = midi.curls;
-        handState.spread = midi.spread;
-        handState.wrist = midi.wrist;
-        handState.cmc = { flex: 0, sweep: 0, rotation: 0 };
+        s.curls = midi.curls;
+        s.spread = midi.spread;
+        s.wrist = midi.wrist;
+        s.cmc = { flex: 0, sweep: 0, rotation: 0 };
         syncAllHandSliders();
       }
 
@@ -640,7 +758,7 @@ async function init() {
   wireControls();
   wireLibrary();
   buildObjectList();
-  showPropertiesFor('hand');
+  showPropertiesFor('hand-Right');
   animate();
   await initHands();
 }
