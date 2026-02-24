@@ -6,6 +6,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { HandViewer3D } from '../hand-pose-studio/hand-viewer-3d.js';
 import { SkeletonStore } from '../hand-pose-studio/skeleton-store.js';
 import { TimelineEngine } from './timeline.js';
+import { SpaceMouse } from './spacemouse.js';
 
 // ── State ──
 
@@ -88,6 +89,13 @@ let ambientLight, spotLight, spotTarget;
 let screenMesh, groundPlane;
 let viewer3d;
 const skeletonStore = new SkeletonStore();
+
+// ── SpaceMouse ──
+
+const spacemouse = new SpaceMouse();
+const SM_TRANSLATE_SPEED = 1.5;  // units/sec at sensitivity 1
+const SM_ROTATE_SPEED = 2.0;     // rad/sec at sensitivity 1
+let lastFrameTime = 0;
 
 // ── DOM refs ──
 
@@ -657,6 +665,39 @@ function wireControls() {
       syncCameraSliders();
     });
   }
+
+  // ── SpaceMouse ──
+  const smDot = $('#spacemouse-dot');
+  const smLabel = $('#spacemouse-label');
+  const smBtn = $('#spacemouse-connect');
+
+  spacemouse.onStatus = (connected, name) => {
+    smDot.classList.toggle('connected', connected);
+    smLabel.textContent = connected ? `SpaceMouse: ${name}` : 'SpaceMouse: not detected';
+    smBtn.textContent = connected ? 'Connected' : 'Connect';
+    smBtn.disabled = connected;
+  };
+
+  smBtn.addEventListener('click', async () => {
+    try {
+      await spacemouse.connect();
+    } catch (err) {
+      if (err.name === 'NotFoundError') return; // user cancelled picker
+      console.error('SpaceMouse connect failed:', err);
+      if (err.name === 'NotAllowedError') {
+        smLabel.textContent = 'Quit 3DxWare first (Activity Monitor → 3DxService)';
+      } else {
+        smLabel.textContent = `SpaceMouse: ${err.message}`;
+      }
+    }
+  });
+
+  const speedSlider = $('#spacemouse-speed');
+  const speedDisplay = $(`.value[data-for="spacemouse-speed"]`);
+  speedSlider.addEventListener('input', () => {
+    spacemouse.sensitivity = parseFloat(speedSlider.value);
+    speedDisplay.textContent = spacemouse.sensitivity.toFixed(1);
+  });
 
   // ── Scene ──
   bindRange('ambient-intensity', () => sceneState.ambientIntensity, (v) => { sceneState.ambientIntensity = v; updateAmbient(); });
@@ -1489,9 +1530,69 @@ function exportPNG() {
 
 // ── Render Loop ──
 
-function animate() {
+function animate(now) {
   requestAnimationFrame(animate);
+
+  const dt = lastFrameTime ? (now - lastFrameTime) / 1000 : 0;
+  lastFrameTime = now;
+
   controls.update();
+
+  // SpaceMouse 6DoF — skip during animation playback
+  if (controls.enabled && spacemouse.connected) {
+    const axes = spacemouse.poll();
+    if (axes && dt > 0 && dt < 0.5) {
+      const tSpeed = SM_TRANSLATE_SPEED * dt;
+      const rSpeed = SM_ROTATE_SPEED * dt;
+
+      // Camera-local axes
+      const mat = camera.matrixWorld;
+      const right = new THREE.Vector3(mat.elements[0], mat.elements[1], mat.elements[2]).normalize();
+      const forward = new THREE.Vector3(-mat.elements[8], -mat.elements[9], -mat.elements[10]).normalize();
+      const worldUp = new THREE.Vector3(0, 1, 0);
+
+      // Translation (object mode — motions feel like grabbing the object)
+      // tx+: push right → object right → camera trucks left
+      // ty-: push forward (In) → object comes toward you → camera dollies out
+      // tz-: lift up → object up → camera pedestals down
+      const offset = new THREE.Vector3();
+      offset.addScaledVector(right, -axes.tx * tSpeed);
+      offset.addScaledVector(forward, axes.ty * tSpeed);
+      offset.addScaledVector(worldUp, axes.tz * tSpeed);
+
+      camera.position.add(offset);
+      controls.target.add(offset);
+
+      // Rotation (object mode — orbit around scene origin, like Fusion360)
+      const pivot = new THREE.Vector3(0, 0, 0);
+
+      if (axes.rz !== 0) {
+        // Twist CW (rz+) → object spins CW → camera orbits CCW
+        const angle = axes.rz * rSpeed;
+        const camOff = camera.position.clone().sub(pivot);
+        const tgtOff = controls.target.clone().sub(pivot);
+        camOff.applyAxisAngle(worldUp, angle);
+        tgtOff.applyAxisAngle(worldUp, angle);
+        camera.position.copy(pivot).add(camOff);
+        controls.target.copy(pivot).add(tgtOff);
+      }
+
+      if (axes.rx !== 0) {
+        // Tilt forward (rx-) → object tilts away → camera orbits up (see top)
+        const angle = -axes.rx * rSpeed;
+        const camOff = camera.position.clone().sub(pivot);
+        const tgtOff = controls.target.clone().sub(pivot);
+        camOff.applyAxisAngle(right, angle);
+        tgtOff.applyAxisAngle(right, angle);
+        camera.position.copy(pivot).add(camOff);
+        controls.target.copy(pivot).add(tgtOff);
+      }
+
+      controls.update();
+      syncCameraSliders();
+    }
+  }
+
   renderer.render(scene, camera);
 }
 

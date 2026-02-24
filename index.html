@@ -327,6 +327,17 @@
             <button class="btn btn-sm" data-cam-preset="right">Right</button>
           </div>
 
+          <div class="control-group spacemouse-status">
+            <span class="status-dot" id="spacemouse-dot"></span>
+            <span id="spacemouse-label">SpaceMouse: not detected</span>
+            <button class="btn btn-sm" id="spacemouse-connect">Connect</button>
+          </div>
+          <div class="control-group">
+            <label>Speed</label>
+            <input type="range" id="spacemouse-speed" min="0.1" max="3" step="0.1" value="1">
+            <span class="value" data-for="spacemouse-speed">1.0</span>
+          </div>
+
           <div class="subsection">Position</div>
           <div class="control-group">
             <label>X</label>
