@@ -6,6 +6,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { HandViewer3D } from '../hand-pose-studio/hand-viewer-3d.js';
 import { SkeletonStore } from '../hand-pose-studio/skeleton-store.js';
 import { TimelineEngine } from './timeline.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { SpaceMouse } from './spacemouse.js';
 
 // ── State ──
@@ -22,8 +23,31 @@ function defaultHandState(handedness) {
     wrist: { flex: 0, deviation: 0, pronation: 0 },
     cmc: { flex: 0, sweep: 0, rotation: 0 },
     rotation: { x: 0, y: 0, z: 0 },
+    material: { roughness: 0.6, metalness: 0.0, opacity: 1.0, emissive: '#000000' },
   };
 }
+
+const POSE_PRESETS = {
+  open: {
+    curls: { thumb: 0, index: 0, middle: 0, ring: 0, pinky: 0 },
+    spread: { thumb: 0.5, index: 0.5, middle: 0.5, ring: 0.5, pinky: 0.5 },
+    cmc: { flex: 0, sweep: 0, rotation: 0 },
+  },
+  fist: {
+    curls: { thumb: 1, index: 1, middle: 1, ring: 1, pinky: 1 },
+    spread: { thumb: 0.5, index: 0.5, middle: 0.5, ring: 0.5, pinky: 0.5 },
+    cmc: { flex: 20, sweep: -15, rotation: 20 },
+  },
+};
+
+const SURFACE_PRESETS = {
+  skin:   { roughness: 0.6,  metalness: 0.0, opacity: 1.0, emissive: '#000000' },
+  matte:  { roughness: 1.0,  metalness: 0.0, opacity: 1.0, emissive: '#000000' },
+  glossy: { roughness: 0.15, metalness: 0.0, opacity: 1.0, emissive: '#000000' },
+  chrome: { roughness: 0.05, metalness: 1.0, opacity: 1.0, emissive: '#000000' },
+  gold:   { roughness: 0.2,  metalness: 1.0, opacity: 1.0, emissive: '#000000' },
+  glass:  { roughness: 0.05, metalness: 0.0, opacity: 0.3, emissive: '#000000' },
+};
 
 const handStates = { Right: defaultHandState('Right'), Left: defaultHandState('Left') };
 let selectedHand = 'Right';
@@ -66,6 +90,10 @@ function createSlotHand(handedness) {
     else if (child.isMesh && !child.isSkinnedMesh) forearmMesh = child;
   });
 
+  // Clone materials so slots are independent
+  if (mesh) mesh.material = mesh.material.clone();
+  if (forearmMesh) forearmMesh.material = forearmMesh.material.clone();
+
   // Enable shadow casting on cloned meshes
   group.traverse(child => {
     if (child.isMesh || child.isSkinnedMesh) child.castShadow = true;
@@ -87,6 +115,7 @@ const OBJECT_PATHS = {};
 let scene, camera, renderer, controls;
 let ambientLight, spotLight, spotTarget;
 let screenMesh, groundPlane;
+let envTexture;  // for hand material reflections only
 let viewer3d;
 const skeletonStore = new SkeletonStore();
 
@@ -121,6 +150,11 @@ function initScene() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   viewport.appendChild(renderer.domElement);
+
+  // Environment map for hand material reflections (not applied globally to avoid brightening the whole scene)
+  const pmremGenerator = new THREE.PMREMGenerator(renderer);
+  envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
+  pmremGenerator.dispose();
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0.15, 0);
@@ -240,13 +274,27 @@ function poseOneHand(slotKey) {
   // Copy group quaternion (baseOrientation + user rotation from poseFromMIDI)
   clone.group.quaternion.copy(original.group.quaternion);
 
-  // Slot-specific position, scale, color
+  // Slot-specific position, scale, material
   clone.group.position.set(st.position.x, st.position.y, st.position.z);
   clone.mesh.scale.setScalar(st.scale);
   if (clone.forearmMesh) clone.forearmMesh.scale.setScalar(st.scale);
+
   const color = new THREE.Color(st.color);
-  clone.mesh.material.color.set(color);
-  if (clone.forearmMesh) clone.forearmMesh.material.color.set(color);
+  const emissive = new THREE.Color(st.material.emissive);
+  const matProps = st.material;
+  for (const mat of [clone.mesh.material, clone.forearmMesh?.material].filter(Boolean)) {
+    mat.color.set(color);
+    mat.roughness = matProps.roughness;
+    mat.metalness = matProps.metalness;
+    mat.emissive.set(emissive);
+    mat.envMap = envTexture;
+    const wasTransparent = mat.transparent;
+    const nowTransparent = matProps.opacity < 1.0;
+    mat.transparent = nowTransparent;
+    mat.depthWrite = !nowTransparent;
+    mat.opacity = matProps.opacity;
+    if (wasTransparent !== nowTransparent) mat.needsUpdate = true;
+  }
 
   clone.group.updateMatrixWorld(true);
   clone.mesh.skeleton.update();
@@ -270,6 +318,22 @@ function applySelectedHand() {
   if (!viewer3d || !viewer3d.ready) return;
   poseOneHand(selectedHand);
   reassertVisibility();
+}
+
+// ── Preset Blend ──
+
+function applyPresetBlend(t) {
+  const s = hs();
+  const a = POSE_PRESETS.open, b = POSE_PRESETS.fist;
+  for (const f of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
+    s.curls[f] = a.curls[f] + (b.curls[f] - a.curls[f]) * t;
+    s.spread[f] = a.spread[f] + (b.spread[f] - a.spread[f]) * t;
+  }
+  for (const k of ['flex', 'sweep', 'rotation']) {
+    s.cmc[k] = a.cmc[k] + (b.cmc[k] - a.cmc[k]) * t;
+  }
+  syncAllHandSliders();
+  applySelectedHand();
 }
 
 // ── Pose Mirroring ──
@@ -507,6 +571,7 @@ function syncAllHandSliders() {
   syncSlider('hand-pos-z', s.position.z);
   syncSlider('hand-scale', s.scale);
   $('#hand-color').value = s.color;
+  syncMaterialSliders();
   // Sync handedness toggle buttons
   for (const b of $$('.toggle-group [data-hand]')) {
     b.classList.toggle('active', b.dataset.hand === s.handedness);
@@ -551,6 +616,33 @@ function syncSceneSliders() {
   $('#scene-bg').value = sceneState.background;
 }
 
+function syncMaterialSliders() {
+  const m = hs().material;
+  syncSlider('mat-roughness', m.roughness);
+  syncSlider('mat-metalness', m.metalness);
+  syncSlider('mat-opacity', m.opacity);
+  const emInput = $('#mat-emissive');
+  if (emInput) emInput.value = m.emissive;
+  updateSurfacePresetActive();
+}
+
+function updateSurfacePresetActive() {
+  const m = hs().material;
+  for (const btn of $$('[data-surface]')) {
+    const preset = SURFACE_PRESETS[btn.dataset.surface];
+    const match = preset &&
+      Math.abs(preset.roughness - m.roughness) < 0.001 &&
+      Math.abs(preset.metalness - m.metalness) < 0.001 &&
+      Math.abs(preset.opacity - m.opacity) < 0.001 &&
+      preset.emissive === m.emissive;
+    btn.classList.toggle('active', !!match);
+  }
+}
+
+function clearSurfacePresetActive() {
+  for (const btn of $$('[data-surface]')) btn.classList.remove('active');
+}
+
 function wireControls() {
   // ── Handedness toggle ──
   for (const btn of $$('.toggle-group [data-hand]')) {
@@ -574,6 +666,19 @@ function wireControls() {
     });
   }
 
+  // ── Preset blend ──
+  $('#preset-blend').addEventListener('input', (e) => {
+    applyPresetBlend(parseFloat(e.target.value));
+  });
+  $('#preset-open').addEventListener('click', () => {
+    $('#preset-blend').value = 0;
+    applyPresetBlend(0);
+  });
+  $('#preset-fist').addEventListener('click', () => {
+    $('#preset-blend').value = 1;
+    applyPresetBlend(1);
+  });
+
   // ── Hand position ──
   bindRange('hand-pos-x', () => hs().position.x, (v) => { hs().position.x = v; applySelectedHand(); });
   bindRange('hand-pos-y', () => hs().position.y, (v) => { hs().position.y = v; applySelectedHand(); });
@@ -585,6 +690,28 @@ function wireControls() {
     hs().color = e.target.value;
     applySelectedHand();
   });
+
+  // ── Material sliders ──
+  bindRange('mat-roughness', () => hs().material.roughness, (v) => { hs().material.roughness = v; clearSurfacePresetActive(); applySelectedHand(); });
+  bindRange('mat-metalness', () => hs().material.metalness, (v) => { hs().material.metalness = v; clearSurfacePresetActive(); applySelectedHand(); });
+  bindRange('mat-opacity', () => hs().material.opacity, (v) => { hs().material.opacity = v; clearSurfacePresetActive(); applySelectedHand(); });
+
+  $('#mat-emissive').addEventListener('input', (e) => {
+    hs().material.emissive = e.target.value;
+    clearSurfacePresetActive();
+    applySelectedHand();
+  });
+
+  // ── Surface presets ──
+  for (const btn of $$('[data-surface]')) {
+    btn.addEventListener('click', () => {
+      const preset = SURFACE_PRESETS[btn.dataset.surface];
+      if (!preset) return;
+      Object.assign(hs().material, JSON.parse(JSON.stringify(preset)));
+      syncMaterialSliders();
+      applySelectedHand();
+    });
+  }
 
   // ── Finger curls ──
   for (const finger of ['thumb', 'index', 'middle', 'ring', 'pinky']) {
@@ -826,8 +953,21 @@ function renderSkeletonList() {
           clone.mesh.scale.setScalar(s.scale);
           if (clone.forearmMesh) clone.forearmMesh.scale.setScalar(s.scale);
           const color = new THREE.Color(s.color);
-          clone.mesh.material.color.set(color);
-          if (clone.forearmMesh) clone.forearmMesh.material.color.set(color);
+          const emissive = new THREE.Color(s.material.emissive);
+          const matProps = s.material;
+          for (const mat of [clone.mesh.material, clone.forearmMesh?.material].filter(Boolean)) {
+            mat.color.set(color);
+            mat.roughness = matProps.roughness;
+            mat.metalness = matProps.metalness;
+            mat.emissive.set(emissive);
+            mat.envMap = envTexture;
+            const wasTransparent = mat.transparent;
+            const nowTransparent = matProps.opacity < 1.0;
+            mat.transparent = nowTransparent;
+            mat.depthWrite = !nowTransparent;
+            mat.opacity = matProps.opacity;
+            if (wasTransparent !== nowTransparent) mat.needsUpdate = true;
+          }
           clone.group.updateMatrixWorld(true);
           clone.mesh.skeleton.update();
         }
@@ -901,6 +1041,15 @@ function buildPropRegistry() {
         state: () => handStates[slotKey], keys: ['rotation', axis], apply,
       };
     }
+
+    for (const param of ['roughness', 'metalness', 'opacity']) {
+      PROP_REGISTRY[`${prefix}.material.${param}`] = {
+        state: () => handStates[slotKey], keys: ['material', param], apply,
+      };
+    }
+    PROP_REGISTRY[`${prefix}.material.emissive`] = {
+      state: () => handStates[slotKey], keys: ['material', 'emissive'], apply,
+    };
   }
 
   // Light
@@ -1017,6 +1166,7 @@ function getCaptureGroups(objectId) {
       { id: 'rotation', label: 'Rotation', paths: ['x','y','z'].map(a => `${p}.rotation.${a}`) },
       { id: 'scale', label: 'Scale', paths: [`${p}.scale`] },
       { id: 'color', label: 'Color', paths: [`${p}.color`] },
+      { id: 'material', label: 'Material', paths: [`${p}.material.roughness`, `${p}.material.metalness`, `${p}.material.opacity`, `${p}.material.emissive`] },
     ];
   }
   if (objectId === 'light') {
@@ -1459,6 +1609,11 @@ function loadScene(jsonText) {
       const handednessChanged = current.handedness !== saved.handedness;
 
       Object.assign(current, JSON.parse(JSON.stringify(saved)));
+
+      // Ensure material exists (backward compat with older scene files)
+      if (!current.material) {
+        current.material = { roughness: 0.6, metalness: 0.0, opacity: 1.0, emissive: '#000000' };
+      }
 
       // Recreate clone if handedness changed
       if (handednessChanged && slotHands[slotKey]) {

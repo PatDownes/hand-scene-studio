@@ -354,6 +354,17 @@ input[type="range"]::-moz-range-thumb {
   color: var(--accent-dim);
 }
 
+/* ── Preset Blend Row ── */
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.preset-row input[type="range"] { flex: 1; }
+
 /* ── Skeleton List (Pose Library) ── */
 
 .skeleton-list {
@@ -638,6 +649,26 @@ input[type="range"]::-moz-range-thumb {
 
 .status-dot.connected {
   background: var(--accent);
+}
+
+/* ── Surface Presets ── */
+
+.surface-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.surface-presets .btn {
+  justify-content: center;
+}
+
+.surface-presets .btn.active {
+  background: var(--accent);
+  color: #0f0f14;
+  border-color: var(--accent);
+  font-weight: 600;
 }
 
 /* ── Preset Button Group ── */
