@@ -17,6 +17,8 @@ export class SpaceMouse {
     // Latest axis state (updated by HID input reports)
     this._tx = 0; this._ty = 0; this._tz = 0;
     this._rx = 0; this._ry = 0; this._rz = 0;
+    this._tStamp = 0; // last translation report time
+    this._rStamp = 0; // last rotation report time
 
     this._onInputReport = this._onInputReport.bind(this);
 
@@ -75,17 +77,20 @@ export class SpaceMouse {
 
   _onInputReport(e) {
     const data = e.data; // DataView
+    const now = performance.now();
 
     if (e.reportId === 1 && data.byteLength >= 6) {
       // Translation: 3x int16 LE
       this._tx = data.getInt16(0, true);
       this._ty = data.getInt16(2, true);
       this._tz = data.getInt16(4, true);
+      this._tStamp = now;
     } else if (e.reportId === 2 && data.byteLength >= 6) {
       // Rotation: 3x int16 LE
       this._rx = data.getInt16(0, true);
       this._ry = data.getInt16(2, true);
       this._rz = data.getInt16(4, true);
+      this._rStamp = now;
     }
     // reportId 3 = buttons — ignored for now
   }
@@ -98,6 +103,18 @@ export class SpaceMouse {
   poll() {
     if (!this.device) return null;
 
+    const now = performance.now();
+    const STALE_MS = 100;
+
+    // Zero axes whose report type hasn't arrived recently —
+    // prevents stale values when one report type stops mid-gesture
+    if (now - this._tStamp > STALE_MS) {
+      this._tx = this._ty = this._tz = 0;
+    }
+    if (now - this._rStamp > STALE_MS) {
+      this._rx = this._ry = this._rz = 0;
+    }
+
     const dz = this.deadZone;
     const s = this.sensitivity;
 
@@ -107,12 +124,23 @@ export class SpaceMouse {
       return abs < dz ? 0 : Math.sign(v) * ((abs - dz) / (1 - dz)) * s;
     };
 
-    const tx = apply(this._tx);
-    const ty = apply(this._ty);
-    const tz = apply(this._tz);
-    const rx = apply(this._rx);
-    const ry = apply(this._ry);
-    const rz = apply(this._rz);
+    let tx = apply(this._tx);
+    let ty = apply(this._ty);
+    let tz = apply(this._tz);
+    let rx = apply(this._rx);
+    let ry = apply(this._ry);
+    let rz = apply(this._rz);
+
+    // Dominant-axis filter: when one group (translation vs rotation)
+    // greatly exceeds the other, suppress the weaker group to prevent
+    // mechanical cross-talk (e.g. spin leaking into ty → unwanted zoom)
+    const tMag = Math.abs(tx) + Math.abs(ty) + Math.abs(tz);
+    const rMag = Math.abs(rx) + Math.abs(ry) + Math.abs(rz);
+    if (rMag > 4 * tMag) {
+      tx = ty = tz = 0;
+    } else if (tMag > 4 * rMag) {
+      rx = ry = rz = 0;
+    }
 
     if (tx === 0 && ty === 0 && tz === 0 && rx === 0 && ry === 0 && rz === 0) return null;
 

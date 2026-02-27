@@ -126,6 +126,16 @@ const SM_TRANSLATE_SPEED = 1.5;  // units/sec at sensitivity 1
 const SM_ROTATE_SPEED = 2.0;     // rad/sec at sensitivity 1
 let lastFrameTime = 0;
 
+// ── ViewCube ──
+
+let vcAnimating = false;
+let vcAnimStart = 0;
+const vcAnimDuration = 300; // ms
+let vcAnimFrom = null;      // Vector3 (camera position)
+let vcAnimTo = null;        // Vector3 (camera position)
+let vcTargetFrom = null;    // Vector3 (orbit target)
+let vcTargetTo = null;      // Vector3 (orbit target, null = no change)
+
 // ── DOM refs ──
 
 const $ = (sel) => document.querySelector(sel);
@@ -616,6 +626,79 @@ function syncSceneSliders() {
   $('#scene-bg').value = sceneState.background;
 }
 
+function updateViewCube() {
+  const cube = $('#viewcube');
+  if (!cube) return;
+  const m = camera.matrixWorldInverse.elements;
+  cube.style.transform = `matrix3d(${m[0]},${-m[1]},${m[2]},0,${-m[4]},${m[5]},${-m[6]},0,${m[8]},${-m[9]},${m[10]},0,0,0,0,1)`;
+}
+
+function animateCameraTo(direction) {
+  if (vcAnimating) return;
+  if (timeline && timeline.playing) return;
+  const dist = camera.position.distanceTo(controls.target);
+  const newPos = controls.target.clone().add(direction.normalize().multiplyScalar(dist));
+  vcAnimFrom = camera.position.clone();
+  vcAnimTo = newPos;
+  vcTargetFrom = null;
+  vcTargetTo = null;
+  vcAnimStart = performance.now();
+  vcAnimating = true;
+  controls.enabled = false;
+}
+
+function tickViewCubeAnimation(now) {
+  if (!vcAnimating) return;
+  let t = (now - vcAnimStart) / vcAnimDuration;
+  if (t >= 1) {
+    t = 1;
+    vcAnimating = false;
+    controls.enabled = true;
+  }
+  // smoothstep easing
+  const s = t * t * (3 - 2 * t);
+  camera.position.lerpVectors(vcAnimFrom, vcAnimTo, s);
+  if (vcTargetTo) controls.target.lerpVectors(vcTargetFrom, vcTargetTo, s);
+  controls.update();
+  syncCameraSliders();
+}
+
+function wireViewCube() {
+  const faceDirections = {
+    front:  new THREE.Vector3(0, 0, 1),
+    back:   new THREE.Vector3(0, 0, -1),
+    right:  new THREE.Vector3(1, 0, 0),
+    left:   new THREE.Vector3(-1, 0, 0),
+    top:    new THREE.Vector3(0, 1, 0.001),
+    bottom: new THREE.Vector3(0, -1, 0.001),
+  };
+
+  const cube = $('#viewcube');
+  if (cube) {
+    cube.addEventListener('click', (e) => {
+      const face = e.target.closest('[data-vc-face]');
+      if (!face) return;
+      const dir = faceDirections[face.dataset.vcFace];
+      if (dir) animateCameraTo(dir.clone());
+    });
+  }
+
+  const homeBtn = $('#viewcube-home');
+  if (homeBtn) {
+    homeBtn.addEventListener('click', () => {
+      if (vcAnimating) return;
+      if (timeline && timeline.playing) return;
+      vcAnimFrom = camera.position.clone();
+      vcAnimTo = new THREE.Vector3(0, 0.5, 1.5);
+      vcTargetFrom = controls.target.clone();
+      vcTargetTo = new THREE.Vector3(0, 0.15, 0);
+      vcAnimStart = performance.now();
+      vcAnimating = true;
+      controls.enabled = false;
+    });
+  }
+}
+
 function syncMaterialSliders() {
   const m = hs().material;
   syncSlider('mat-roughness', m.roughness);
@@ -833,6 +916,9 @@ function wireControls() {
     sceneState.background = e.target.value;
     updateAmbient();
   });
+
+  // ── ViewCube ──
+  wireViewCube();
 
   // ── PNG Export ──
   $('#btn-export-png').addEventListener('click', exportPNG);
@@ -1692,6 +1778,9 @@ function animate(now) {
   lastFrameTime = now;
 
   controls.update();
+
+  tickViewCubeAnimation(now);
+  updateViewCube();
 
   // SpaceMouse 6DoF — skip during animation playback
   if (controls.enabled && spacemouse.connected) {
