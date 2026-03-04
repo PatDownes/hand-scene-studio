@@ -33,6 +33,17 @@
       <div class="panel-section">
         <h3>Scene Objects</h3>
         <div id="object-list" class="object-list"></div>
+        <div class="add-prim-row">
+          <select id="prim-type-select" class="btn btn-sm" style="flex:1;">
+            <option value="box">Box</option>
+            <option value="sphere">Sphere</option>
+            <option value="cylinder">Cylinder</option>
+            <option value="cone">Cone</option>
+            <option value="torus">Torus</option>
+            <option value="plane">Plane</option>
+          </select>
+          <button id="btn-add-prim" class="btn btn-sm btn-primary">+ Add</button>
+        </div>
       </div>
 
       <!-- Pose Library -->
@@ -251,6 +262,89 @@
             <label>Rot Z</label>
             <input type="range" id="hand-rot-z" min="-180" max="180" step="1" value="0">
             <span class="value" data-for="hand-rot-z">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Primitive Properties -->
+      <div id="props-primitive" class="props-panel">
+        <div class="panel-section">
+          <h3 id="prim-panel-title">Box 1</h3>
+
+          <div class="subsection">Position</div>
+          <div class="control-group">
+            <label>X</label>
+            <input type="range" id="prim-pos-x" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="prim-pos-x">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Y</label>
+            <input type="range" id="prim-pos-y" min="-1" max="3" step="0.01" value="0.2">
+            <span class="value" data-for="prim-pos-y">0.20</span>
+          </div>
+          <div class="control-group">
+            <label>Z</label>
+            <input type="range" id="prim-pos-z" min="-3" max="3" step="0.01" value="0">
+            <span class="value" data-for="prim-pos-z">0.00</span>
+          </div>
+
+          <div class="subsection">Rotation</div>
+          <div class="control-group">
+            <label>Rot X</label>
+            <input type="range" id="prim-rot-x" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="prim-rot-x">0</span>
+          </div>
+          <div class="control-group">
+            <label>Rot Y</label>
+            <input type="range" id="prim-rot-y" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="prim-rot-y">0</span>
+          </div>
+          <div class="control-group">
+            <label>Rot Z</label>
+            <input type="range" id="prim-rot-z" min="-180" max="180" step="1" value="0">
+            <span class="value" data-for="prim-rot-z">0</span>
+          </div>
+
+          <div class="control-group">
+            <label>Scale</label>
+            <input type="range" id="prim-scale" min="0.1" max="5" step="0.1" value="1">
+            <span class="value" data-for="prim-scale">1.0</span>
+          </div>
+
+          <div class="control-group">
+            <label>Color</label>
+            <input type="color" id="prim-color" value="#ffffff">
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Material</h3>
+          <div class="surface-presets">
+            <button class="btn btn-sm" data-prim-surface="skin">Skin</button>
+            <button class="btn btn-sm" data-prim-surface="matte">Matte</button>
+            <button class="btn btn-sm" data-prim-surface="glossy">Glossy</button>
+            <button class="btn btn-sm" data-prim-surface="chrome">Chrome</button>
+            <button class="btn btn-sm" data-prim-surface="gold">Gold</button>
+            <button class="btn btn-sm" data-prim-surface="glass">Glass</button>
+          </div>
+          <div class="control-group">
+            <label>Roughness</label>
+            <input type="range" id="prim-mat-roughness" min="0" max="1" step="0.01" value="0.5">
+            <span class="value" data-for="prim-mat-roughness">0.50</span>
+          </div>
+          <div class="control-group">
+            <label>Metalness</label>
+            <input type="range" id="prim-mat-metalness" min="0" max="1" step="0.01" value="0">
+            <span class="value" data-for="prim-mat-metalness">0.00</span>
+          </div>
+          <div class="control-group">
+            <label>Opacity</label>
+            <input type="range" id="prim-mat-opacity" min="0.05" max="1" step="0.01" value="1">
+            <span class="value" data-for="prim-mat-opacity">1.00</span>
+          </div>
+          <div class="control-group">
+            <label>Emissive</label>
+            <input type="color" id="prim-mat-emissive" value="#000000">
           </div>
         </div>
       </div>

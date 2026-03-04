@@ -813,3 +813,24 @@ input[type="range"]::-moz-range-thumb {
   color: var(--accent);
   border-color: var(--accent-dim);
 }
+
+/* ── Add Primitive Row ── */
+
+.add-prim-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* ── Object Item Delete Button ── */
+
+.object-item .delete-btn {
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--danger);
+}
+
+.object-item .delete-btn:hover {
+  opacity: 1;
+}

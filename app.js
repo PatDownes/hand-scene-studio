@@ -49,6 +49,38 @@ const SURFACE_PRESETS = {
   glass:  { roughness: 0.05, metalness: 0.0, opacity: 0.3, emissive: '#000000' },
 };
 
+// ── Primitive Types ──
+
+const PRIM_TYPES = {
+  box:      { label: 'Box',      icon: '\u25A3' },
+  sphere:   { label: 'Sphere',   icon: '\u25CF' },
+  cylinder: { label: 'Cylinder', icon: '\u2B21' },
+  cone:     { label: 'Cone',     icon: '\u25B2' },
+  torus:    { label: 'Torus',    icon: '\u25CE' },
+  plane:    { label: 'Plane',    icon: '\u25AC' },
+};
+
+const primitives = [];
+const primMeshes = {};
+let nextPrimId = 1;
+let selectedPrimId = null;
+
+function defaultPrimState(type, id) {
+  return {
+    id: `prim-${id}`,
+    type,
+    label: `${PRIM_TYPES[type].label} ${id}`,
+    enabled: true,
+    position: { x: 0, y: 0.2, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: 1,
+    color: '#ffffff',
+    material: { roughness: 0.5, metalness: 0.0, opacity: 1.0, emissive: '#000000' },
+  };
+}
+
+function ps() { return primitives.find(p => p.id === selectedPrimId); }
+
 const handStates = { Right: defaultHandState('Right'), Left: defaultHandState('Left') };
 let selectedHand = 'Right';
 function hs() { return handStates[selectedHand]; }
@@ -400,6 +432,113 @@ function updateAmbient() {
   scene.background = new THREE.Color(sceneState.background);
 }
 
+// ── Primitives ──
+
+function createPrimGeometry(type) {
+  switch (type) {
+    case 'box':      return new THREE.BoxGeometry(0.3, 0.3, 0.3);
+    case 'sphere':   return new THREE.SphereGeometry(0.15, 32, 16);
+    case 'cylinder': return new THREE.CylinderGeometry(0.15, 0.15, 0.3, 32);
+    case 'cone':     return new THREE.ConeGeometry(0.15, 0.3, 32);
+    case 'torus':    return new THREE.TorusGeometry(0.15, 0.05, 16, 32);
+    case 'plane':    return new THREE.PlaneGeometry(0.3, 0.3);
+    default:         return new THREE.BoxGeometry(0.3, 0.3, 0.3);
+  }
+}
+
+function addPrimitive(type) {
+  const id = nextPrimId++;
+  const prim = defaultPrimState(type, id);
+
+  // Offset position to avoid stacking
+  prim.position.x = primitives.length * 0.35;
+
+  const geo = createPrimGeometry(type);
+  const mat = new THREE.MeshStandardMaterial({
+    color: prim.color,
+    roughness: prim.material.roughness,
+    metalness: prim.material.metalness,
+    envMap: envTexture,
+    side: type === 'plane' ? THREE.DoubleSide : THREE.FrontSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  primMeshes[prim.id] = mesh;
+  primitives.push(prim);
+  registerPrimitive(prim);
+  updatePrimitive(prim);
+
+  // Select the new primitive
+  selectedObject = prim.id;
+  selectedPrimId = prim.id;
+  buildObjectList();
+  showPropertiesFor(prim.id);
+  syncPrimitiveSliders();
+}
+
+function removePrimitive(id) {
+  const mesh = primMeshes[id];
+  if (mesh) {
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    delete primMeshes[id];
+  }
+
+  const idx = primitives.findIndex(p => p.id === id);
+  if (idx !== -1) primitives.splice(idx, 1);
+
+  unregisterPrimitive(id);
+
+  if (selectedPrimId === id) {
+    selectedPrimId = null;
+    if (primitives.length > 0) {
+      selectedObject = primitives[0].id;
+      selectedPrimId = primitives[0].id;
+    } else {
+      selectedObject = 'hand-Right';
+      selectedHand = 'Right';
+    }
+  }
+
+  buildObjectList();
+  showPropertiesFor(selectedObject);
+  if (selectedPrimId) syncPrimitiveSliders();
+  else if (selectedObject.startsWith('hand-')) syncAllHandSliders();
+}
+
+function updatePrimitive(prim) {
+  const mesh = primMeshes[prim.id];
+  if (!mesh) return;
+
+  mesh.position.set(prim.position.x, prim.position.y, prim.position.z);
+  mesh.rotation.set(
+    prim.rotation.x * Math.PI / 180,
+    prim.rotation.y * Math.PI / 180,
+    prim.rotation.z * Math.PI / 180
+  );
+  mesh.scale.setScalar(prim.scale);
+
+  const mat = mesh.material;
+  mat.color.set(prim.color);
+  mat.roughness = prim.material.roughness;
+  mat.metalness = prim.material.metalness;
+  mat.emissive.set(prim.material.emissive);
+  mat.envMap = envTexture;
+
+  const wasTransparent = mat.transparent;
+  const nowTransparent = prim.material.opacity < 1.0;
+  mat.transparent = nowTransparent;
+  mat.depthWrite = !nowTransparent;
+  mat.opacity = prim.material.opacity;
+  if (wasTransparent !== nowTransparent) mat.needsUpdate = true;
+
+  mesh.visible = prim.enabled;
+}
+
 // ── Object List ──
 
 const sceneObjects = [
@@ -452,6 +591,39 @@ function buildObjectList() {
 
     list.appendChild(item);
   }
+
+  // Primitives
+  for (const prim of primitives) {
+    const item = document.createElement('div');
+    item.className = 'object-item' + (selectedObject === prim.id ? ' selected' : '');
+
+    const eyeIcon = prim.enabled ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
+    const typeInfo = PRIM_TYPES[prim.type];
+
+    item.innerHTML = `<span class="icon">${typeInfo.icon}</span><span class="label">${prim.label}</span><span class="visibility-toggle">${eyeIcon}</span><span class="delete-btn">\u2715</span>`;
+
+    item.querySelector('.visibility-toggle').addEventListener('click', (e) => {
+      e.stopPropagation();
+      prim.enabled = !prim.enabled;
+      updatePrimitive(prim);
+      buildObjectList();
+    });
+
+    item.querySelector('.delete-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removePrimitive(prim.id);
+    });
+
+    item.addEventListener('click', () => {
+      selectedObject = prim.id;
+      selectedPrimId = prim.id;
+      syncPrimitiveSliders();
+      buildObjectList();
+      showPropertiesFor(prim.id);
+    });
+
+    list.appendChild(item);
+  }
 }
 
 function showPropertiesFor(id) {
@@ -459,7 +631,8 @@ function showPropertiesFor(id) {
     panel.classList.remove('active');
   }
   // Both hand-Right and hand-Left map to the same props-hand panel
-  const panelId = id.startsWith('hand-') ? 'hand' : id;
+  // All primitives map to the shared props-primitive panel
+  const panelId = id.startsWith('hand-') ? 'hand' : id.startsWith('prim-') ? 'primitive' : id;
   const target = $(`#props-${panelId}`);
   if (target) target.classList.add('active');
 }
@@ -624,6 +797,46 @@ function syncCameraSliders() {
 function syncSceneSliders() {
   syncSlider('ambient-intensity', sceneState.ambientIntensity);
   $('#scene-bg').value = sceneState.background;
+}
+
+function syncPrimitiveSliders() {
+  const p = ps();
+  if (!p) return;
+  syncSlider('prim-pos-x', p.position.x);
+  syncSlider('prim-pos-y', p.position.y);
+  syncSlider('prim-pos-z', p.position.z);
+  syncSlider('prim-rot-x', p.rotation.x);
+  syncSlider('prim-rot-y', p.rotation.y);
+  syncSlider('prim-rot-z', p.rotation.z);
+  syncSlider('prim-scale', p.scale);
+  $('#prim-color').value = p.color;
+  syncSlider('prim-mat-roughness', p.material.roughness);
+  syncSlider('prim-mat-metalness', p.material.metalness);
+  syncSlider('prim-mat-opacity', p.material.opacity);
+  const emInput = $('#prim-mat-emissive');
+  if (emInput) emInput.value = p.material.emissive;
+  const title = $('#prim-panel-title');
+  if (title) title.textContent = p.label;
+  updatePrimSurfacePresetActive();
+}
+
+function updatePrimSurfacePresetActive() {
+  const p = ps();
+  if (!p) return;
+  const m = p.material;
+  for (const btn of $$('[data-prim-surface]')) {
+    const preset = SURFACE_PRESETS[btn.dataset.primSurface];
+    const match = preset &&
+      Math.abs(preset.roughness - m.roughness) < 0.001 &&
+      Math.abs(preset.metalness - m.metalness) < 0.001 &&
+      Math.abs(preset.opacity - m.opacity) < 0.001 &&
+      preset.emissive === m.emissive;
+    btn.classList.toggle('active', !!match);
+  }
+}
+
+function clearPrimSurfacePresetActive() {
+  for (const btn of $$('[data-prim-surface]')) btn.classList.remove('active');
 }
 
 function updateViewCube() {
@@ -816,6 +1029,45 @@ function wireControls() {
   bindRange('hand-rot-x', () => hs().rotation.x, (v) => { hs().rotation.x = v; applySelectedHand(); });
   bindRange('hand-rot-y', () => hs().rotation.y, (v) => { hs().rotation.y = v; applySelectedHand(); });
   bindRange('hand-rot-z', () => hs().rotation.z, (v) => { hs().rotation.z = v; applySelectedHand(); });
+
+  // ── Primitives ──
+  bindRange('prim-pos-x', () => ps()?.position.x ?? 0, (v) => { const p = ps(); if (p) { p.position.x = v; updatePrimitive(p); } });
+  bindRange('prim-pos-y', () => ps()?.position.y ?? 0, (v) => { const p = ps(); if (p) { p.position.y = v; updatePrimitive(p); } });
+  bindRange('prim-pos-z', () => ps()?.position.z ?? 0, (v) => { const p = ps(); if (p) { p.position.z = v; updatePrimitive(p); } });
+  bindRange('prim-rot-x', () => ps()?.rotation.x ?? 0, (v) => { const p = ps(); if (p) { p.rotation.x = v; updatePrimitive(p); } });
+  bindRange('prim-rot-y', () => ps()?.rotation.y ?? 0, (v) => { const p = ps(); if (p) { p.rotation.y = v; updatePrimitive(p); } });
+  bindRange('prim-rot-z', () => ps()?.rotation.z ?? 0, (v) => { const p = ps(); if (p) { p.rotation.z = v; updatePrimitive(p); } });
+  bindRange('prim-scale', () => ps()?.scale ?? 1, (v) => { const p = ps(); if (p) { p.scale = v; updatePrimitive(p); } });
+
+  bindRange('prim-mat-roughness', () => ps()?.material.roughness ?? 0.5, (v) => { const p = ps(); if (p) { p.material.roughness = v; clearPrimSurfacePresetActive(); updatePrimitive(p); } });
+  bindRange('prim-mat-metalness', () => ps()?.material.metalness ?? 0, (v) => { const p = ps(); if (p) { p.material.metalness = v; clearPrimSurfacePresetActive(); updatePrimitive(p); } });
+  bindRange('prim-mat-opacity', () => ps()?.material.opacity ?? 1, (v) => { const p = ps(); if (p) { p.material.opacity = v; clearPrimSurfacePresetActive(); updatePrimitive(p); } });
+
+  $('#prim-color').addEventListener('input', (e) => {
+    const p = ps();
+    if (p) { p.color = e.target.value; updatePrimitive(p); }
+  });
+
+  $('#prim-mat-emissive').addEventListener('input', (e) => {
+    const p = ps();
+    if (p) { p.material.emissive = e.target.value; clearPrimSurfacePresetActive(); updatePrimitive(p); }
+  });
+
+  for (const btn of $$('[data-prim-surface]')) {
+    btn.addEventListener('click', () => {
+      const p = ps();
+      if (!p) return;
+      const preset = SURFACE_PRESETS[btn.dataset.primSurface];
+      if (!preset) return;
+      Object.assign(p.material, JSON.parse(JSON.stringify(preset)));
+      syncPrimitiveSliders();
+      updatePrimitive(p);
+    });
+  }
+
+  $('#btn-add-prim').addEventListener('click', () => {
+    addPrimitive($('#prim-type-select').value);
+  });
 
   // ── Light ──
   bindRange('light-intensity', () => lightState.intensity, (v) => { lightState.intensity = v; updateLight(); });
@@ -1179,6 +1431,47 @@ function buildPropRegistry() {
   OBJECT_PATHS['camera'] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith('camera.'));
 }
 
+function registerPrimitive(prim) {
+  const prefix = `primitive.${prim.id}`;
+  const apply = () => updatePrimitive(prim);
+
+  for (const axis of ['x', 'y', 'z']) {
+    PROP_REGISTRY[`${prefix}.position.${axis}`] = {
+      state: () => prim, keys: ['position', axis], apply,
+    };
+    PROP_REGISTRY[`${prefix}.rotation.${axis}`] = {
+      state: () => prim, keys: ['rotation', axis], apply,
+    };
+  }
+
+  PROP_REGISTRY[`${prefix}.scale`] = {
+    state: () => prim, keys: ['scale'], apply,
+  };
+
+  PROP_REGISTRY[`${prefix}.color`] = {
+    state: () => prim, keys: ['color'], apply,
+  };
+
+  for (const param of ['roughness', 'metalness', 'opacity']) {
+    PROP_REGISTRY[`${prefix}.material.${param}`] = {
+      state: () => prim, keys: ['material', param], apply,
+    };
+  }
+  PROP_REGISTRY[`${prefix}.material.emissive`] = {
+    state: () => prim, keys: ['material', 'emissive'], apply,
+  };
+
+  OBJECT_PATHS[prim.id] = Object.keys(PROP_REGISTRY).filter(p => p.startsWith(prefix + '.'));
+}
+
+function unregisterPrimitive(id) {
+  const prefix = `primitive.${id}.`;
+  for (const key of Object.keys(PROP_REGISTRY)) {
+    if (key.startsWith(prefix)) delete PROP_REGISTRY[key];
+  }
+  delete OBJECT_PATHS[id];
+}
+
 function readProp(path) {
   const entry = PROP_REGISTRY[path];
   if (!entry) return undefined;
@@ -1221,6 +1514,7 @@ function applyAnimationFrame(time) {
 
   // Sync sliders for whichever object is selected
   if (selectedObject.startsWith('hand-')) syncAllHandSliders();
+  else if (selectedObject.startsWith('prim-')) syncPrimitiveSliders();
   else if (selectedObject === 'light') syncLightSliders();
   else if (selectedObject === 'screen') syncScreenSliders();
   else if (selectedObject === 'scene') syncSceneSliders();
@@ -1248,6 +1542,18 @@ function getCaptureGroups(objectId) {
       { id: 'spread', label: 'Spread', paths: ['thumb','index','middle','ring','pinky'].map(f => `${p}.spread.${f}`) },
       { id: 'wrist', label: 'Wrist', paths: [`${p}.wrist.flex`, `${p}.wrist.deviation`, `${p}.wrist.pronation`] },
       { id: 'cmc', label: 'CMC', paths: [`${p}.cmc.flex`, `${p}.cmc.sweep`, `${p}.cmc.rotation`] },
+      { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `${p}.position.${a}`) },
+      { id: 'rotation', label: 'Rotation', paths: ['x','y','z'].map(a => `${p}.rotation.${a}`) },
+      { id: 'scale', label: 'Scale', paths: [`${p}.scale`] },
+      { id: 'color', label: 'Color', paths: [`${p}.color`] },
+      { id: 'material', label: 'Material', paths: [`${p}.material.roughness`, `${p}.material.metalness`, `${p}.material.opacity`, `${p}.material.emissive`] },
+    ];
+  }
+  if (objectId.startsWith('prim-')) {
+    const prim = primitives.find(p => p.id === objectId);
+    if (!prim) return [];
+    const p = `primitive.${prim.id}`;
+    return [
       { id: 'position', label: 'Position', paths: ['x','y','z'].map(a => `${p}.position.${a}`) },
       { id: 'rotation', label: 'Rotation', paths: ['x','y','z'].map(a => `${p}.rotation.${a}`) },
       { id: 'scale', label: 'Scale', paths: [`${p}.scale`] },
@@ -1288,6 +1594,10 @@ function getCaptureGroups(objectId) {
 function objectDisplayName(objectId) {
   if (objectId === 'hand-Right') return 'Right Hand';
   if (objectId === 'hand-Left') return 'Left Hand';
+  if (objectId.startsWith('prim-')) {
+    const prim = primitives.find(p => p.id === objectId);
+    if (prim) return prim.label;
+  }
   const obj = sceneObjects.find(o => o.id === objectId);
   return obj?.label || objectId;
 }
@@ -1644,6 +1954,8 @@ async function saveScene() {
         position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
         target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
       },
+      primitives: primitives.map(p => JSON.parse(JSON.stringify(p))),
+      nextPrimId,
     },
     animation: timeline.toJSON(),
   };
@@ -1719,6 +2031,44 @@ function loadScene(jsonText) {
       camera.position.set(data.scene.camera.position.x, data.scene.camera.position.y, data.scene.camera.position.z);
       controls.target.set(data.scene.camera.target.x, data.scene.camera.target.y, data.scene.camera.target.z);
       controls.update();
+    }
+
+    // Clear existing primitives
+    for (const prim of [...primitives]) {
+      const mesh = primMeshes[prim.id];
+      if (mesh) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+        delete primMeshes[prim.id];
+      }
+      unregisterPrimitive(prim.id);
+    }
+    primitives.length = 0;
+    selectedPrimId = null;
+
+    // Restore primitives
+    if (data.scene?.primitives) {
+      if (data.scene.nextPrimId) nextPrimId = data.scene.nextPrimId;
+      for (const saved of data.scene.primitives) {
+        const prim = JSON.parse(JSON.stringify(saved));
+        const geo = createPrimGeometry(prim.type);
+        const mat = new THREE.MeshStandardMaterial({
+          color: prim.color,
+          roughness: prim.material.roughness,
+          metalness: prim.material.metalness,
+          envMap: envTexture,
+          side: prim.type === 'plane' ? THREE.DoubleSide : THREE.FrontSide,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        primMeshes[prim.id] = mesh;
+        primitives.push(prim);
+        registerPrimitive(prim);
+        updatePrimitive(prim);
+      }
     }
 
     // Apply all state
