@@ -74,6 +74,10 @@
         </div>
         <button id="viewcube-home" class="vc-home" title="Home view">&#8962;</button>
       </div>
+      <div id="export-progress" class="export-progress">
+        <div class="export-progress-bar" id="export-progress-bar"></div>
+        <span class="export-progress-text" id="export-progress-text"></span>
+      </div>
     </main>
 
     <!-- Right Panel -->
@@ -569,7 +573,19 @@
         <button id="btn-save-scene" class="btn btn-sm">Save Scene</button>
         <button id="btn-load-scene" class="btn btn-sm">Load Scene</button>
         <input type="file" id="file-scene" accept=".json" style="display:none;">
-        <button id="btn-export-png" class="btn btn-sm btn-primary">PNG Screenshot</button>
+        <select id="export-resolution" class="btn btn-sm">
+          <option value="viewport">Viewport</option>
+          <option value="512">512px</option>
+          <option value="1024" selected>1024px</option>
+          <option value="2048">2048px</option>
+        </select>
+        <select id="export-fps" class="btn btn-sm">
+          <option value="15">15 fps</option>
+          <option value="24">24 fps</option>
+          <option value="30" selected>30 fps</option>
+        </select>
+        <button id="btn-export-png" class="btn btn-sm btn-primary">PNG</button>
+        <button id="btn-export-apng" class="btn btn-sm btn-primary">APNG</button>
       </div>
     </footer>
 

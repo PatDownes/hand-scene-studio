@@ -8,6 +8,7 @@ import { SkeletonStore } from '../hand-pose-studio/skeleton-store.js';
 import { TimelineEngine } from './timeline.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { SpaceMouse } from './spacemouse.js';
+import { encodeAPNG } from '../hand-pose-studio/apng-encoder.js';
 
 // ── State ──
 
@@ -1172,8 +1173,9 @@ function wireControls() {
   // ── ViewCube ──
   wireViewCube();
 
-  // ── PNG Export ──
+  // ── Export ──
   $('#btn-export-png').addEventListener('click', exportPNG);
+  $('#btn-export-apng').addEventListener('click', exportAPNG);
 
   // ── Save / Load Scene ──
   $('#btn-save-scene').addEventListener('click', saveScene);
@@ -2104,19 +2106,135 @@ function loadScene(jsonText) {
   }
 }
 
-// ── PNG Export ──
+// ── Export Helpers ──
+
+function getExportResolution() {
+  const val = $('#export-resolution').value;
+  if (val === 'viewport') return null; // use current viewport size
+  return parseInt(val, 10);
+}
+
+function withExportSize(res, fn) {
+  const canvas = renderer.domElement;
+  const origW = canvas.width;
+  const origH = canvas.height;
+  const origAspect = camera.aspect;
+
+  if (res) {
+    renderer.setSize(res, res, false);
+    camera.aspect = 1;
+    camera.updateProjectionMatrix();
+  }
+
+  const result = fn(canvas.width, canvas.height);
+
+  if (res) {
+    renderer.setSize(origW, origH, false);
+    camera.aspect = origAspect;
+    camera.updateProjectionMatrix();
+  }
+
+  return result;
+}
 
 function exportPNG() {
-  // Force a render to ensure preserveDrawingBuffer has current frame
-  renderer.render(scene, camera);
+  const res = getExportResolution();
+  withExportSize(res, () => {
+    renderer.render(scene, camera);
+    const dataURL = renderer.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.download = 'hand-scene-studio.png';
+    link.href = dataURL;
+    link.click();
+  });
+  $('#footer-status').textContent = 'PNG exported';
+}
 
-  const dataURL = renderer.domElement.toDataURL('image/png');
+async function exportAPNG() {
+  const res = getExportResolution();
+  const fps = parseInt($('#export-fps').value, 10);
+  const numFrames = Math.max(1, Math.ceil(timeline.duration * fps));
+
+  const canvas = renderer.domElement;
+  const origW = canvas.width;
+  const origH = canvas.height;
+  const origAspect = camera.aspect;
+  const wasPlaying = timeline.playing;
+  const origTime = timeline.currentTime;
+
+  if (wasPlaying) timeline.pause();
+
+  // Resize for export
+  if (res) {
+    renderer.setSize(res, res, false);
+    camera.aspect = 1;
+    camera.updateProjectionMatrix();
+  }
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Show progress
+  const progressEl = $('#export-progress');
+  const barEl = $('#export-progress-bar');
+  const textEl = $('#export-progress-text');
+  progressEl.classList.add('active');
+  barEl.style.width = '0%';
+  textEl.textContent = `Encoding frame 0 / ${numFrames}`;
+  $('#btn-export-apng').disabled = true;
+  $('#footer-status').textContent = 'Exporting APNG…';
+
+  const buffers = [];
+
+  for (let i = 0; i < numFrames; i++) {
+    const time = (i / numFrames) * timeline.duration;
+
+    // Apply scene state at this time
+    applyAnimationFrame(time);
+    renderer.render(scene, camera);
+
+    // Capture frame as PNG ArrayBuffer
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    buffers.push(await blob.arrayBuffer());
+
+    // Update progress
+    const pct = ((i + 1) / numFrames) * 100;
+    barEl.style.width = `${pct}%`;
+    textEl.textContent = `Encoding frame ${i + 1} / ${numFrames}`;
+
+    // Yield every 4 frames to keep UI responsive
+    if ((i + 1) % 4 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // Encode APNG
+  textEl.textContent = 'Assembling APNG…';
+  await new Promise(r => setTimeout(r, 0));
+  const apngBlob = encodeAPNG(buffers, w, h, Math.round(1000 / fps));
+
+  // Download
+  const url = URL.createObjectURL(apngBlob);
   const link = document.createElement('a');
   link.download = 'hand-scene-studio.png';
-  link.href = dataURL;
+  link.href = url;
   link.click();
+  URL.revokeObjectURL(url);
 
-  $('#footer-status').textContent = 'PNG exported';
+  // Restore renderer size
+  if (res) {
+    renderer.setSize(origW, origH, false);
+    camera.aspect = origAspect;
+    camera.updateProjectionMatrix();
+  }
+
+  // Restore timeline position
+  timeline.seek(origTime);
+
+  // Hide progress
+  progressEl.classList.remove('active');
+  $('#btn-export-apng').disabled = false;
+  $('#footer-status').textContent = `APNG exported (${numFrames} frames)`;
 }
 
 // ── Render Loop ──
